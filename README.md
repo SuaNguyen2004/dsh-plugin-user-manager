@@ -1,6 +1,6 @@
 # dsh-plugin-user-manager
 
-Plugin for **DeepSeek Harness (DSH)** providing multi-user authentication, SQLite persistence, workspace isolation, security sandboxing, and token quota management.
+Plugin for **DeepSeek Harness (DSH)** providing multi-user authentication, SQLite persistence, workspace isolation, security sandboxing, and token quota metering & management.
 
 ## 🚀 Features
 
@@ -23,6 +23,16 @@ Plugin for **DeepSeek Harness (DSH)** providing multi-user authentication, SQLit
     - `GET /api/workspace/files`
     - `GET /api/workspace/file?path=...`
     - `POST /api/workspace/file`
+- **Token Quota & Usage Metering**:
+  - Transactional token consumption with `token_logs` SQLite table.
+  - Atomic validation rejecting token overrun with HTTP 402 ("Quota exceeded").
+  - Admin management endpoints for user listing, quota modification, and token reset.
+  - REST endpoints:
+    - `GET /api/user/quota`
+    - `POST /api/user/consume`
+    - `GET /api/admin/users` (Admin only)
+    - `POST /api/admin/quota` (Admin only)
+    - `POST /api/admin/reset-usage` (Admin only)
 
 ## 📦 Installation & Setup
 
@@ -37,11 +47,14 @@ dsh plugin --profile web link "c:\path\to\User Management"
 Run automated tests:
 
 ```powershell
-# Test Auth & Database
+# 1. Test Auth & Database
 node test-auth.js
 
-# Test Workspace Sandbox & Path Traversal Defense
+# 2. Test Workspace Sandbox & Path Traversal Defense
 node test-workspace.js
+
+# 3. Test Token Quota & Admin Management
+node test-quota.js
 ```
 
 ## 📄 License
