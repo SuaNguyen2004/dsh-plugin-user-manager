@@ -85,7 +85,10 @@ async function runTests() {
   await webServer.listen(TEST_PORT);
 
   // Apply plugin with mock context
-  const mockCtx = { webServer };
+  const mockCtx = {
+    webServer,
+    provide: (key, val) => { mockCtx[key] = val; }
+  };
   apply(mockCtx);
 
   try {
