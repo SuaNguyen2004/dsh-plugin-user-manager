@@ -129,6 +129,11 @@ async function runWorkspaceTests() {
     await request(TEST_PORT, 'POST', '/api/auth/register', { username: userA, password: 'password123' });
     await request(TEST_PORT, 'POST', '/api/auth/register', { username: userB, password: 'password123' });
 
+    // Approve both users
+    const { approveUser } = await import('./lib/db.js');
+    approveUser(userA);
+    approveUser(userB);
+
     // Login User A
     const loginARes = await request(TEST_PORT, 'POST', '/api/auth/login', { username: userA, password: 'password123' });
     const tokenA = loginARes.data.token;

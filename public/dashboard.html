@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek Harness - User Management Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --border-color: #30363d;
+      --text-main: #f0f6fc;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #79b8ff;
+      --success: #3fb950;
+      --warning: #d29922;
+      --danger: #f85149;
+      --purple: #bc8cff;
+      --radius: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    code, pre {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Top Navigation Bar */
+    header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      padding: 14px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #1f6feb, #8957e5);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 16px;
+    }
+
+    .brand-title {
+      font-weight: 700;
+      font-size: 17px;
+      letter-spacing: -0.3px;
+    }
+
+    .badge-phase {
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(88, 166, 255, 0.3);
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .user-session-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .user-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-tertiary);
+      padding: 6px 14px;
+      border-radius: 30px;
+      border: 1px solid var(--border-color);
+      font-size: 13px;
+    }
+
+    .role-tag {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+    .role-admin { background: rgba(188, 140, 255, 0.2); color: var(--purple); }
+    .role-user { background: rgba(63, 185, 80, 0.2); color: var(--success); }
+
+    /* Layout Containers */
+    main {
+      flex: 1;
+      max-width: 1300px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 900px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 12px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Buttons & Inputs */
+    button {
+      cursor: pointer;
+      border: none;
+      font-weight: 600;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: #238636;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #2ea043; }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+    }
+    .btn-secondary:hover { background: #30363d; }
+
+    .btn-accent {
+      background: #1f6feb;
+      color: #fff;
+    }
+    .btn-accent:hover { background: #388bfd; }
+
+    .btn-danger {
+      background: rgba(248, 81, 73, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(248, 81, 73, 0.3);
+    }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+
+    input, textarea, select {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 9px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      width: 100%;
+      outline: none;
+      transition: border 0.2s;
+    }
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--accent);
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    /* Progress bar */
+    .progress-bar-container {
+      background: var(--bg-tertiary);
+      border-radius: 20px;
+      height: 10px;
+      overflow: hidden;
+      margin: 8px 0;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--success);
+      transition: width 0.4s ease, background-color 0.4s ease;
+    }
+
+    /* Stats Grid */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    .stat-box {
+      background: var(--bg-tertiary);
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      text-align: center;
+    }
+    .stat-num {
+      font-size: 18px;
+      font-weight: 700;
+      margin-top: 4px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* File List & Viewer */
+    .file-tree {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      max-height: 220px;
+      overflow-y: auto;
+      padding: 8px;
+      font-size: 13px;
+    }
+    .file-item {
+      padding: 6px 10px;
+      border-radius: 6px;
+      display: flex;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+    }
+    .file-item:hover {
+      background: var(--bg-tertiary);
+    }
+    .file-item.selected {
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--accent);
+    }
+
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+    th {
+      color: var(--text-muted);
+      font-weight: 600;
+      background: var(--bg-tertiary);
+    }
+
+    /* Toast notification */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 12px 20px;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      display: none;
+      z-index: 999;
+      font-size: 13px;
+    }
+    #toast.success { border-left: 4px solid var(--success); }
+    #toast.error { border-left: 4px solid var(--danger); }
+    #toast.warning { border-left: 4px solid var(--warning); }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navbar -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">DSH</div>
+      <div class="brand-title">DeepSeek Harness User Manager</div>
+      <span class="badge-phase">Phase 4 Active</span>
+    </div>
+    <div class="user-session-info">
+      <div id="userBadge" class="user-pill" style="display: none;">
+        <span id="userNameDisplay">guest</span>
+        <span id="userRoleDisplay" class="role-tag role-user">user</span>
+      </div>
+      <button id="logoutBtn" class="btn-danger" style="display: none;" onclick="logout()">Đăng xuất</button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- NOT LOGGED IN: Auth Section -->
+    <div id="authSection" class="card" style="max-width: 500px; margin: 40px auto; width: 100%;">
+      <div class="card-header">
+        <h2 class="card-title" id="authTitle">Đăng nhập tài khoản</h2>
+        <button class="btn-secondary" id="toggleAuthBtn" onclick="toggleAuthMode()">Chưa có nick? Đăng ký</button>
+      </div>
+
+      <div class="form-group">
+        <label>Tên đăng nhập (Username):</label>
+        <input type="text" id="authUsername" placeholder="vd: admin hoặc dev_123" value="admin">
+      </div>
+
+      <div class="form-group">
+        <label>Mật khẩu (Password):</label>
+        <input type="password" id="authPassword" placeholder="Tối thiểu 6 ký tự" value="admin123">
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 10px;">
+        <button class="btn-primary" style="flex: 1;" id="submitAuthBtn" onclick="submitAuth()">Đăng nhập</button>
+        <button class="btn-secondary" onclick="quickFillAdmin()">Admin Mặc định</button>
+      </div>
+    </div>
+
+    <!-- LOGGED IN: Main Dashboard -->
+    <div id="dashboardSection" style="display: none; display: flex; flex-direction: column; gap: 24px;">
+
+      <!-- Row 1: Quota & Metering -->
+      <div class="grid-2">
+        <!-- Card 1: Token Quota Status -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Hạn mức Token (Quota Metering)</h3>
+            <button class="btn-secondary" onclick="loadQuota()">Làm mới</button>
+          </div>
+
+          <div>
+            <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+              <span>Tỷ lệ sử dụng:</span>
+              <strong id="quotaPercentDisplay">0%</strong>
+            </div>
+            <div class="progress-bar-container">
+              <div id="quotaProgressFill" class="progress-fill"></div>
+            </div>
+          </div>
+
+          <div class="stats-row">
+            <div class="stat-box">
+              <span style="font-size: 11px; color: var(--text-muted);">Tổng hạn ngạch</span>
+              <div class="stat-num" id="statQuota" style="color: var(--accent);">0</div>
+            </div>
+            <div class="stat-box">
+              <span style="font-size: 11px; color: var(--text-muted);">Đã tiêu thụ</span>
+              <div class="stat-num" id="statUsed" style="color: var(--warning);">0</div>
+            </div>
+            <div class="stat-box">
+              <span style="font-size: 11px; color: var(--text-muted);">Còn lại</span>
+              <div class="stat-num" id="statRemaining" style="color: var(--success);">0</div>
+            </div>
+          </div>
+
+          <!-- Consume test -->
+          <div style="background: var(--bg-tertiary); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 10px;">
+            <label style="font-size: 12px; font-weight: 600;">Mô phỏng tiêu thụ token:</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="number" id="consumeAmount" placeholder="Số token" value="15000" style="flex: 1;">
+              <select id="consumeAction" style="flex: 1;">
+                <option value="deepseek_chat">Chat hội thoại (Chat)</option>
+                <option value="deepseek_reasoner">Suy luận sâu (Reasoning)</option>
+                <option value="code_execution">Chạy mã lệnh (Tool Call)</option>
+              </select>
+              <button class="btn-primary" onclick="consumeTokens()">Trừ Token</button>
+            </div>
+            <span style="font-size: 11px; color: var(--text-muted);">Thử nhập số token lớn hơn "Còn lại" để thấy hệ thống chặn 402 Quota Exceeded!</span>
+          </div>
+        </div>
+
+        <!-- Card 2: Workspace Sandbox File Manager -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Không gian làm việc (Workspace Sandbox)</h3>
+            <button class="btn-secondary" onclick="loadFiles()">Xem file</button>
+          </div>
+
+          <div style="font-size: 12px; color: var(--text-muted);">
+            Thư mục cô lập: <code id="workspacePathDisplay" style="color: var(--accent);">workspaces/username</code>
+          </div>
+
+          <div class="file-tree" id="fileListContainer">
+            <div style="color: var(--text-muted); text-align: center; padding: 20px;">Đang tải danh sách file...</div>
+          </div>
+
+          <!-- File actions -->
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="filePathInput" placeholder="Tên file (vd: src/index.js, test.txt)">
+              <button class="btn-secondary" onclick="readFile()">Đọc file</button>
+            </div>
+            <textarea id="fileContentInput" rows="3" placeholder="Nội dung file..."></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <button class="btn-primary" onclick="saveFile()">Lưu vào Workspace</button>
+              <button class="btn-danger" onclick="testPathTraversalAttack()">Thử hack (Path Traversal)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 2: Admin Panel (Chỉ hiện khi là Admin) -->
+      <div id="adminPanel" class="card" style="display: none;">
+        <div class="card-header">
+          <h3 class="card-title">Bảng Quản Trị Hệ Thống (Dành riêng cho Admin)</h3>
+          <button class="btn-secondary" onclick="loadAdminUsers()">Làm mới danh sách</button>
+        </div>
+
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Vai trò</th>
+                <th>Hạn ngạch (Quota)</th>
+                <th>Đã dùng</th>
+                <th>Tỷ lệ</th>
+                <th>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody id="adminUsersTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <div id="toast"></div>
+
+  <script>
+    // Determine Base URL dynamically (supports 3080, 3088 or any custom port)
+    const BASE_URL = window.location.protocol.startsWith('http')
+      ? window.location.origin
+      : 'http://127.0.0.1:3088';
+
+    let currentUser = null;
+    let authMode = 'login'; // 'login' | 'register'
+
+    function showToast(message, type = 'info') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = type;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 4000);
+    }
+
+    function toggleAuthMode() {
+      authMode = authMode === 'login' ? 'register' : 'login';
+      document.getElementById('authTitle').textContent = authMode === 'login' ? 'Đăng nhập tài khoản' : 'Đăng ký tài khoản mới';
+      document.getElementById('submitAuthBtn').textContent = authMode === 'login' ? 'Đăng nhập' : 'Tạo tài khoản';
+      document.getElementById('toggleAuthBtn').textContent = authMode === 'login' ? 'Chưa có nick? Đăng ký' : 'Đã có nick? Đăng nhập';
+    }
+
+    function quickFillAdmin() {
+      document.getElementById('authUsername').value = 'admin';
+      document.getElementById('authPassword').value = 'admin123';
+      if (authMode !== 'login') toggleAuthMode();
+    }
+
+    // 1. Submit Auth (Login / Register)
+    async function submitAuth() {
+      const username = document.getElementById('authUsername').value.trim();
+      const password = document.getElementById('authPassword').value.trim();
+
+      if (!username || !password) {
+        showToast('Vui lòng nhập đầy đủ username và password!', 'warning');
+        return;
+      }
+
+      const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+
+      try {
+        const res = await fetch(`${BASE_URL}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ username, password })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Thao tác thất bại');
+
+        if (authMode === 'register') {
+          showToast('Đăng ký thành công! Hãy bấm đăng nhập.', 'success');
+          toggleAuthMode();
+        } else {
+          showToast(`Đăng nhập thành công! Xin chào ${data.user.username}`, 'success');
+          localStorage.setItem('dsh_user_token', data.token);
+          checkSession();
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // 2. Check Session
+    async function checkSession() {
+      const token = localStorage.getItem('dsh_user_token');
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/auth/me`, {
+          credentials: 'include',
+          headers
+        });
+
+        if (!res.ok) throw new Error('Unauthenticated');
+
+        const data = await res.json();
+        currentUser = data.user;
+        renderLoggedInUI();
+      } catch {
+        renderLoggedOutUI();
+      }
+    }
+
+    function renderLoggedInUI() {
+      document.getElementById('authSection').style.display = 'none';
+      document.getElementById('dashboardSection').style.display = 'flex';
+      document.getElementById('userBadge').style.display = 'flex';
+      document.getElementById('logoutBtn').style.display = 'block';
+
+      document.getElementById('userNameDisplay').textContent = currentUser.username;
+      const roleBadge = document.getElementById('userRoleDisplay');
+      roleBadge.textContent = currentUser.role;
+      roleBadge.className = `role-tag role-${currentUser.role}`;
+
+      document.getElementById('workspacePathDisplay').textContent = `workspaces/${currentUser.username}`;
+
+      // Show admin panel if admin
+      if (currentUser.role === 'admin') {
+        document.getElementById('adminPanel').style.display = 'flex';
+        loadAdminUsers();
+      } else {
+        document.getElementById('adminPanel').style.display = 'none';
+      }
+
+      loadQuota();
+      loadFiles();
+    }
+
+    function renderLoggedOutUI() {
+      currentUser = null;
+      document.getElementById('authSection').style.display = 'block';
+      document.getElementById('dashboardSection').style.display = 'none';
+      document.getElementById('userBadge').style.display = 'none';
+      document.getElementById('logoutBtn').style.display = 'none';
+    }
+
+    // 3. Logout
+    async function logout() {
+      try {
+        await fetch(`${BASE_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+      } catch {}
+      localStorage.removeItem('dsh_user_token');
+      showToast('Đã đăng xuất thành công!', 'info');
+      renderLoggedOutUI();
+    }
+
+    function getAuthHeaders() {
+      const token = localStorage.getItem('dsh_user_token');
+      return token ? { 'Authorization': `Bearer ${token}` } : {};
+    }
+
+    // 4. Load Quota
+    async function loadQuota() {
+      try {
+        const res = await fetch(`${BASE_URL}/api/user/quota`, {
+          credentials: 'include',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        document.getElementById('statQuota').textContent = Number(data.token_quota).toLocaleString();
+        document.getElementById('statUsed').textContent = Number(data.tokens_used).toLocaleString();
+        document.getElementById('statRemaining').textContent = Number(data.remaining).toLocaleString();
+
+        const pct = Math.min(100, data.percent_used || 0);
+        document.getElementById('quotaPercentDisplay').textContent = `${pct}%`;
+        const fill = document.getElementById('quotaProgressFill');
+        fill.style.width = `${pct}%`;
+        fill.style.backgroundColor = pct > 80 ? 'var(--danger)' : (pct > 50 ? 'var(--warning)' : 'var(--success)');
+      } catch (err) {
+        showToast(`Lỗi lấy quota: ${err.message}`, 'error');
+      }
+    }
+
+    // 5. Consume Tokens
+    async function consumeTokens() {
+      const amount = Number(document.getElementById('consumeAmount').value);
+      const action = document.getElementById('consumeAction').value;
+
+      if (!amount || amount <= 0) {
+        showToast('Vui lòng nhập số token dương hợp lệ!', 'warning');
+        return;
+      }
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/user/consume`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ tokens: amount, action })
+        });
+
+        const data = await res.json();
+        if (res.status === 402) {
+          showToast(`❌ Cạn hạn ngạch: Đã dùng ${data.tokens_used}/${data.token_quota}. Cần thêm token!`, 'error');
+          loadQuota();
+          return;
+        }
+
+        if (!res.ok) throw new Error(data.error);
+
+        showToast(`Đã tiêu thụ thành công ${amount.toLocaleString()} token (${action})!`, 'success');
+        loadQuota();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // 6. Load Files
+    async function loadFiles() {
+      const container = document.getElementById('fileListContainer');
+      try {
+        const res = await fetch(`${BASE_URL}/api/workspace/files`, {
+          credentials: 'include',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        container.innerHTML = '';
+        if (!data.files || data.files.length === 0) {
+          container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">Workspace còn trống. Hãy tạo file đầu tiên bên dưới!</div>';
+          return;
+        }
+
+        function renderNodes(nodes) {
+          nodes.forEach(node => {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.innerHTML = `
+              <span>${node.type === 'directory' ? '📁' : '📄'} ${node.path}</span>
+              <span style="color: var(--text-muted); font-size: 11px;">${node.size ? node.size + ' B' : ''}</span>
+            `;
+            if (node.type === 'file') {
+              div.onclick = () => {
+                document.getElementById('filePathInput').value = node.path;
+                readFile();
+              };
+            }
+            container.appendChild(div);
+            if (node.children) renderNodes(node.children);
+          });
+        }
+
+        renderNodes(data.files);
+      } catch (err) {
+        container.innerHTML = `<div style="color: var(--danger); padding: 10px;">Lỗi: ${err.message}</div>`;
+      }
+    }
+
+    // 7. Read File
+    async function readFile() {
+      const path = document.getElementById('filePathInput').value.trim();
+      if (!path) {
+        showToast('Vui lòng nhập đường dẫn file để đọc!', 'warning');
+        return;
+      }
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/workspace/file?path=${encodeURIComponent(path)}`, {
+          credentials: 'include',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        document.getElementById('fileContentInput').value = data.content;
+        showToast(`Đã đọc nội dung file: ${path}`, 'success');
+      } catch (err) {
+        showToast(`Lỗi đọc file: ${err.message}`, 'error');
+      }
+    }
+
+    // 8. Save File
+    async function saveFile() {
+      const path = document.getElementById('filePathInput').value.trim();
+      const content = document.getElementById('fileContentInput').value;
+
+      if (!path) {
+        showToast('Vui lòng nhập tên đường dẫn file!', 'warning');
+        return;
+      }
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/workspace/file`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ path, content })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        showToast(`Đã lưu file thành công: ${path}`, 'success');
+        loadFiles();
+      } catch (err) {
+        showToast(`Lỗi lưu file: ${err.message}`, 'error');
+      }
+    }
+
+    // 9. Test Path Traversal Attack (Security Check)
+    async function testPathTraversalAttack() {
+      const maliciousPath = '../../data/users.db';
+      try {
+        const res = await fetch(`${BASE_URL}/api/workspace/file?path=${encodeURIComponent(maliciousPath)}`, {
+          credentials: 'include',
+          headers: getAuthHeaders()
+        });
+
+        if (res.status === 403) {
+          showToast(`🛡️ SANDBOX HOẠT ĐỘNG HOÀN HẢO! Cuộc tấn công vượt quyền "${maliciousPath}" đã bị chặn đứng với mã 403 Forbidden!`, 'success');
+        } else {
+          showToast(`Cảnh báo: Server trả về mã ${res.status}`, 'warning');
+        }
+      } catch (err) {
+        showToast(`Lỗi kết nối: ${err.message}`, 'error');
+      }
+    }
+
+    // 10. Load Admin Users
+    async function loadAdminUsers() {
+      const tbody = document.getElementById('adminUsersTableBody');
+      try {
+        const res = await fetch(`${BASE_URL}/api/admin/users`, {
+          credentials: 'include',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        tbody.innerHTML = '';
+        data.users.forEach(u => {
+          const tr = document.createElement('tr');
+          const pct = u.token_quota > 0 ? ((u.tokens_used / u.token_quota) * 100).toFixed(1) : 0;
+          tr.innerHTML = `
+            <td>#${u.id}</td>
+            <td><strong>${u.username}</strong></td>
+            <td><span class="role-tag role-${u.role}">${u.role}</span></td>
+            <td><code>${Number(u.token_quota).toLocaleString()}</code></td>
+            <td><code>${Number(u.tokens_used).toLocaleString()}</code></td>
+            <td>${pct}%</td>
+            <td>
+              <button class="btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="promptSetQuota('${u.username}', ${u.token_quota})">Sửa Quota</button>
+              <button class="btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="resetUsage('${u.username}')">Reset</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" style="color: var(--danger); text-align: center;">${err.message}</td></tr>`;
+      }
+    }
+
+    async function promptSetQuota(username, currentQuota) {
+      const newQuotaStr = prompt(`Nhập mức Quota mới cho user "${username}":`, currentQuota);
+      if (newQuotaStr === null) return;
+      const quota = Number(newQuotaStr);
+      if (isNaN(quota) || quota < 0) {
+        alert('Mức quota không hợp lệ!');
+        return;
+      }
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/admin/quota`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ username, quota })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        showToast(`Đã nâng quota của ${username} lên ${quota.toLocaleString()}`, 'success');
+        loadAdminUsers();
+        if (currentUser && currentUser.username === username) loadQuota();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function resetUsage(username) {
+      if (!confirm(`Bạn có chắc muốn reset số token đã dùng của user "${username}" về 0?`)) return;
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/admin/reset-usage`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ username })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        showToast(`Đã reset token đã dùng của ${username} về 0!`, 'success');
+        loadAdminUsers();
+        if (currentUser && currentUser.username === username) loadQuota();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // Auto check session on boot
+    window.addEventListener('DOMContentLoaded', checkSession);
+  </script>
+</body>
+</html>

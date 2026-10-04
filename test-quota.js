@@ -107,6 +107,10 @@ async function runQuotaTests() {
     console.log(`\nRegistering user '${normalUser}'...`);
     await request(TEST_PORT, 'POST', '/api/auth/register', { username: normalUser, password: 'password123' });
 
+    // Approve user
+    const { approveUser } = await import('./lib/db.js');
+    approveUser(normalUser);
+
     const userLoginRes = await request(TEST_PORT, 'POST', '/api/auth/login', { username: normalUser, password: 'password123' });
     const userCookie = userLoginRes.headers['set-cookie'][0].split(';')[0];
 

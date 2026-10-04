@@ -153,6 +153,10 @@ async function runTests() {
     console.log('Duplicate response:', duplicateRes.data);
     if (duplicateRes.status !== 409) throw new Error('Duplicate register check failed');
 
+    // 6.b Admin approves user
+    const { approveUser } = await import('./lib/db.js');
+    approveUser(testUser);
+
     // 7. Test Login with new user
     console.log(`\n[7] Testing POST /api/auth/login for user '${testUser}'...`);
     const userLoginRes = await request(TEST_PORT, 'POST', '/api/auth/login', {
