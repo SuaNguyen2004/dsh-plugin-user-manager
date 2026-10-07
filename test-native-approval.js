@@ -114,10 +114,10 @@ async function runNativeApprovalTests() {
     const indexRes = await request(TEST_PORT, 'GET', '/');
     console.log('Status code:', indexRes.status);
     const html = String(indexRes.data);
-    if (!html.includes('id="dum-guest-banner"') || !html.includes('id="dum-modal-admin"')) {
+    if (!html.includes('id="dsh-um-bar"') || !html.includes('id="dsh-um-admin-modal"')) {
       throw new Error('Native UI injection into index.html failed!');
     }
-    console.log('✅ Injected Guest Banner, User Bar, Auth Modal & Admin Modal verified in HTML!');
+    console.log('✅ Injected User Bar & Admin Modal verified in HTML!');
 
     // 1. Register new user 'newbie' -> Status must be 'pending'
     const newbie = `newbie_${Date.now().toString().slice(-4)}`;

@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek Harness - Đăng nhập</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Ambient background glow */
+    body::before {
+      content: "";
+      position: absolute;
+      top: -20%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(56, 139, 253, 0.15) 0%, rgba(13, 17, 23, 0) 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .login-container {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 440px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+      overflow: hidden;
+      animation: fadeIn 0.3s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(12px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .brand-header {
+      padding: 32px 28px 24px;
+      text-align: center;
+      border-bottom: 1px solid rgba(48, 54, 61, 0.7);
+      background: linear-gradient(180deg, rgba(22, 27, 34, 0.8) 0%, rgba(13, 17, 23, 0.6) 100%);
+    }
+
+    .brand-logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #1f6feb, #8957e5);
+      box-shadow: 0 4px 16px rgba(31, 111, 235, 0.35);
+      margin-bottom: 16px;
+      font-size: 26px;
+    }
+
+    .brand-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #f0f6fc;
+      letter-spacing: -0.3px;
+      margin-bottom: 6px;
+    }
+
+    .brand-subtitle {
+      font-size: 13px;
+      color: #8b949e;
+      line-height: 1.5;
+    }
+
+    .card-body {
+      padding: 24px 28px 32px;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      background: #0d1117;
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid #30363d;
+      margin-bottom: 24px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 10px 14px;
+      border: none;
+      background: transparent;
+      color: #8b949e;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .tab-btn:hover {
+      color: #e6edf3;
+    }
+
+    .tab-btn.active {
+      background: #21262d;
+      color: #58a6ff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Form */
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #8b949e;
+      margin-bottom: 6px;
+    }
+
+    .input-wrapper {
+      position: relative;
+    }
+
+    .input-field {
+      width: 100%;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 11px 14px;
+      color: #e6edf3;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .input-field:focus {
+      border-color: #58a6ff;
+      box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+    }
+
+    .input-field::placeholder {
+      color: #484f58;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 12px;
+      background: #238636;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      margin-top: 10px;
+    }
+
+    .btn-submit:hover {
+      background: #2ea043;
+    }
+
+    .btn-submit:active {
+      transform: scale(0.99);
+    }
+
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-quick {
+      width: 100%;
+      padding: 9px;
+      background: transparent;
+      color: #8b949e;
+      border: 1px dashed #30363d;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-top: 14px;
+      transition: all 0.2s;
+    }
+
+    .btn-quick:hover {
+      border-color: #8957e5;
+      color: #d2a8ff;
+      background: rgba(137, 87, 229, 0.08);
+    }
+
+    /* Alerts */
+    .alert {
+      padding: 12px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.4;
+      margin-bottom: 18px;
+      display: none;
+    }
+
+    .alert-error {
+      background: rgba(248, 81, 73, 0.15);
+      border: 1px solid rgba(248, 81, 73, 0.4);
+      color: #f85149;
+    }
+
+    .alert-success {
+      background: rgba(63, 185, 80, 0.15);
+      border: 1px solid rgba(63, 185, 80, 0.4);
+      color: #3fb950;
+    }
+
+    .alert-info {
+      background: rgba(56, 139, 253, 0.15);
+      border: 1px solid rgba(56, 139, 253, 0.4);
+      color: #58a6ff;
+    }
+
+    .policy-note {
+      margin-top: 16px;
+      font-size: 11px;
+      color: #6e7681;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    .pending-notice {
+      background: rgba(210, 153, 34, 0.12);
+      border: 1px solid rgba(210, 153, 34, 0.3);
+      color: #d29922;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.4;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="login-container">
+    <div class="brand-header">
+      <div class="brand-logo">🤖</div>
+      <h1 class="brand-title">DeepSeek Harness</h1>
+      <p class="brand-subtitle">Hệ thống AI Workspace đa người dùng</p>
+    </div>
+
+    <div class="card-body">
+      <!-- Tabs -->
+      <div class="tabs">
+        <button id="tab-login" class="tab-btn active" onclick="switchTab('login')">Đăng nhập</button>
+        <button id="tab-register" class="tab-btn" onclick="switchTab('register')">Đăng ký tài khoản</button>
+      </div>
+
+      <!-- Alert Box -->
+      <div id="alert-box" class="alert"></div>
+
+      <!-- Login Form -->
+      <form id="form-login" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label class="form-label" for="login-username">Tên đăng nhập (Username):</label>
+          <div class="input-wrapper">
+            <input type="text" id="login-username" class="input-field" placeholder="Nhập username" required autocomplete="username" autofocus>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="login-password">Mật khẩu (Password):</label>
+          <div class="input-wrapper">
+            <input type="password" id="login-password" class="input-field" placeholder="Nhập mật khẩu" required autocomplete="current-password">
+          </div>
+        </div>
+
+        <button type="submit" id="btn-login-submit" class="btn-submit">Đăng nhập vào DSH</button>
+        <button type="button" class="btn-quick" onclick="quickFillAdmin()">⚡ Điền nhanh tài khoản Admin (Quản trị)</button>
+      </form>
+
+      <!-- Register Form -->
+      <form id="form-register" style="display: none;" onsubmit="handleRegister(event)">
+        <div class="pending-notice">
+          ℹ️ <strong>Chính sách hệ thống:</strong> Sau khi gửi đăng ký thành công, tài khoản sẽ ở trạng thái chờ Quản trị viên (Admin) phê duyệt trước khi có thể đăng nhập.
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="reg-username">Tên đăng nhập mới:</label>
+          <div class="input-wrapper">
+            <input type="text" id="reg-username" class="input-field" placeholder="Từ 3 đến 32 ký tự (chữ, số, _, -)" required autocomplete="username">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="reg-password">Mật khẩu:</label>
+          <div class="input-wrapper">
+            <input type="password" id="reg-password" class="input-field" placeholder="Tối thiểu 6 ký tự" required autocomplete="new-password">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="reg-password-confirm">Xác nhận mật khẩu:</label>
+          <div class="input-wrapper">
+            <input type="password" id="reg-password-confirm" class="input-field" placeholder="Nhập lại mật khẩu" required autocomplete="new-password">
+          </div>
+        </div>
+
+        <button type="submit" id="btn-reg-submit" class="btn-submit">Gửi yêu cầu đăng ký</button>
+      </form>
+
+      <div class="policy-note">
+        Mỗi người dùng sở hữu không gian làm việc (workspace) riêng biệt và hạn mức token độc lập.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentTab = 'login';
+
+    function showAlert(msg, type = 'error') {
+      const box = document.getElementById('alert-box');
+      box.className = 'alert alert-' + type;
+      box.innerHTML = msg;
+      box.style.display = 'block';
+    }
+
+    function hideAlert() {
+      const box = document.getElementById('alert-box');
+      box.style.display = 'none';
+      box.innerHTML = '';
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      hideAlert();
+      const tabLogin = document.getElementById('tab-login');
+      const tabReg = document.getElementById('tab-register');
+      const formLogin = document.getElementById('form-login');
+      const formReg = document.getElementById('form-register');
+
+      if (tab === 'login') {
+        tabLogin.classList.add('active');
+        tabReg.classList.remove('active');
+        formLogin.style.display = 'block';
+        formReg.style.display = 'none';
+        document.getElementById('login-username').focus();
+      } else {
+        tabReg.classList.add('active');
+        tabLogin.classList.remove('active');
+        formLogin.style.display = 'none';
+        formReg.style.display = 'block';
+        document.getElementById('reg-username').focus();
+      }
+    }
+
+    function quickFillAdmin() {
+      document.getElementById('login-username').value = 'admin';
+      document.getElementById('login-password').value = 'admin123';
+      hideAlert();
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      hideAlert();
+
+      const username = document.getElementById('login-username').value.trim();
+      const password = document.getElementById('login-password').value.trim();
+      const btn = document.getElementById('btn-login-submit');
+
+      if (!username || !password) {
+        showAlert('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Đang kiểm tra thông tin...';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ username, password })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          showAlert(data.error || 'Đăng nhập không thành công.');
+          btn.disabled = false;
+          btn.textContent = 'Đăng nhập vào DSH';
+          return;
+        }
+
+        // Lưu thông tin phiên
+        if (data.token) {
+          localStorage.setItem('dsh_user_token', data.token);
+        }
+        if (data.user) {
+          localStorage.setItem('dsh_user_info', JSON.stringify(data.user));
+        }
+
+        // Clear previous session pointers
+        localStorage.removeItem('dsh.sessions.current');
+        sessionStorage.clear();
+
+        showAlert('Đăng nhập thành công! Đang chuyển hướng vào không gian làm việc...', 'success');
+
+        // Khởi tạo workspace
+        try {
+          await fetch('/api/workspace/user-init', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + data.token }
+          });
+        } catch (err) {}
+
+        // Chuyển hướng về trang chủ DSH
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 500);
+
+      } catch (err) {
+        showAlert('Lỗi kết nối tới máy chủ: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = 'Đăng nhập vào DSH';
+      }
+    }
+
+    async function handleRegister(e) {
+      e.preventDefault();
+      hideAlert();
+
+      const username = document.getElementById('reg-username').value.trim();
+      const password = document.getElementById('reg-password').value.trim();
+      const confirmPassword = document.getElementById('reg-password-confirm').value.trim();
+      const btn = document.getElementById('btn-reg-submit');
+
+      if (!username || !password) {
+        showAlert('Vui lòng điền đầy đủ thông tin đăng ký.');
+        return;
+      }
+
+      if (username.length < 3 || username.length > 32) {
+        showAlert('Tên đăng nhập phải từ 3 đến 32 ký tự.');
+        return;
+      }
+
+      if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+        showAlert('Tên đăng nhập chỉ chứa chữ cái, số, gạch nối (-) và gạch dưới (_).');
+        return;
+      }
+
+      if (password.length < 6) {
+        showAlert('Mật khẩu phải có ít nhất 6 ký tự.');
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        showAlert('Mật khẩu xác nhận không trùng khớp.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Đang gửi yêu cầu đăng ký...';
+
+      try {
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          showAlert(data.error || 'Đăng ký không thành công.');
+          btn.disabled = false;
+          btn.textContent = 'Gửi yêu cầu đăng ký';
+          return;
+        }
+
+        showAlert('🎉 Đăng ký thành công! Tài khoản của bạn đã được gửi tới Quản trị viên (Admin) để phê duyệt. Vui lòng liên hệ Admin!', 'success');
+        document.getElementById('form-register').reset();
+        btn.disabled = false;
+        btn.textContent = 'Gửi yêu cầu đăng ký';
+
+        // Tự động chuyển qua tab Đăng nhập sau 3.5s
+        setTimeout(() => {
+          switchTab('login');
+          document.getElementById('login-username').value = username;
+          document.getElementById('login-password').focus();
+        }, 3500);
+
+      } catch (err) {
+        showAlert('Lỗi kết nối tới máy chủ: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = 'Gửi yêu cầu đăng ký';
+      }
+    }
+
+    // Kiểm tra xem đã đăng nhập chưa
+    (async function checkExistingAuth() {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('logout') === '1') {
+        localStorage.removeItem('dsh_user_token');
+        localStorage.removeItem('dsh_user_info');
+        localStorage.removeItem('dsh.sessions.current');
+        document.cookie = 'dsh_user_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+        showAlert('✅ Bạn đã đăng xuất thành công khỏi hệ thống.', 'success');
+        return;
+      }
+
+      const token = localStorage.getItem('dsh_user_token');
+      try {
+        const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+        const res = await fetch('/api/auth/me', {
+          credentials: 'include',
+          headers
+        });
+        if (res.ok) {
+          const data = await res.json();
+          showAlert('Bạn hiện đang đăng nhập với tài khoản: <strong>' + data.user.username + '</strong> (' + data.user.role.toUpperCase() + '). <br><a href="/" style="color: #58a6ff; font-weight: bold; text-decoration: underline; display: inline-block; margin-top: 6px;">👉 Nhấn vào đây để vào giao diện chat DSH</a> hoặc đăng nhập tài khoản khác bên dưới.', 'info');
+        }
+      } catch (e) {}
+    })();
+  </script>
+</body>
+</html>
