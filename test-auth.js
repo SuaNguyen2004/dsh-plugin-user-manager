@@ -201,12 +201,10 @@ async function runTests() {
     } finally {
         try {
             const { initDatabase } = await import("./lib/db.js");
-            const fs = await import("node:fs");
-            const path = await import("node:path");
+            const { cleanupUserWorkspaceAndSessions } = await import("./lib/workspace.js");
             const db = initDatabase();
             db.prepare("DELETE FROM users WHERE username = ?").run(testUser);
-            const userDir = path.resolve("workspaces", testUser);
-            if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
+            cleanupUserWorkspaceAndSessions(testUser);
         } catch (e) {}
         await webServer.close();
     }

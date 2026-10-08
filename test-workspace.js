@@ -273,14 +273,11 @@ async function runWorkspaceTests() {
     } finally {
         try {
             const { initDatabase } = await import("./lib/db.js");
-            const fs = await import("node:fs");
-            const path = await import("node:path");
+            const { cleanupUserWorkspaceAndSessions } = await import("./lib/workspace.js");
             const db = initDatabase();
             db.prepare("DELETE FROM users WHERE username IN (?, ?)").run(userA, userB);
-            for (const u of [userA, userB]) {
-                const userDir = path.resolve("workspaces", u);
-                if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
-            }
+            cleanupUserWorkspaceAndSessions(userA);
+            cleanupUserWorkspaceAndSessions(userB);
         } catch (e) {}
         await webServer.close();
     }
