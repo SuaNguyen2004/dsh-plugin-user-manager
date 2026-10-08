@@ -108,6 +108,8 @@ async function runNativeApprovalTests() {
 
   apply(mockCtx);
 
+  let newbie = `newbie_${Date.now().toString().slice(-4)}`;
+
   try {
     // 0. Verify Native tapIndex Injection into DSH index.html
     console.log('\n[0] Testing GET / (DSH index.html with injected native UI)...');
@@ -120,7 +122,6 @@ async function runNativeApprovalTests() {
     console.log('✅ Injected User Bar & Admin Modal verified in HTML!');
 
     // 1. Register new user 'newbie' -> Status must be 'pending'
-    const newbie = `newbie_${Date.now().toString().slice(-4)}`;
     console.log(`\n[1] Registering new user '${newbie}'...`);
     const regRes = await request(TEST_PORT, 'POST', '/api/auth/register', {
       username: newbie,
@@ -215,6 +216,15 @@ async function runNativeApprovalTests() {
     console.log('🎉 TẤT CẢ TEST CASES NATIVE DSH INTEGRATION & APPROVAL FLOW PASS 100%!');
     console.log('========================================================================\n');
   } finally {
+    try {
+      const { initDatabase } = await import("./lib/db.js");
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const db = initDatabase();
+      db.prepare("DELETE FROM users WHERE username = ?").run(newbie);
+      const userDir = path.resolve("workspaces", newbie);
+      if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
+    } catch (e) {}
     await webServer.close();
   }
 }

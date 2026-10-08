@@ -95,6 +95,9 @@ async function runWorkspaceTests() {
 
     apply(mockCtx);
 
+    let userA = `alice_${Date.now().toString().slice(-4)}`;
+    let userB = `bob_${Date.now().toString().slice(-4)}`;
+
     try {
         // 0. Verify Phase 3 Status
         console.log("\n[0] Testing GET /api/user-manager/status...");
@@ -125,8 +128,6 @@ async function runWorkspaceTests() {
         }
 
         // Register User A & User B
-        const userA = `alice_${Date.now().toString().slice(-4)}`;
-        const userB = `bob_${Date.now().toString().slice(-4)}`;
 
         console.log(`\nRegistering User A: ${userA} and User B: ${userB}...`);
         await request(TEST_PORT, "POST", "/api/auth/register", { username: userA, password: "password123" });
@@ -270,6 +271,17 @@ async function runWorkspaceTests() {
         console.log("🎉 TẤT CẢ TEST CASES GIAI ĐOẠN 3 (WORKSPACE & SANDBOX) ĐỀU PASS 100%!");
         console.log("================================================================\n");
     } finally {
+        try {
+            const { initDatabase } = await import("./lib/db.js");
+            const fs = await import("node:fs");
+            const path = await import("node:path");
+            const db = initDatabase();
+            db.prepare("DELETE FROM users WHERE username IN (?, ?)").run(userA, userB);
+            for (const u of [userA, userB]) {
+                const userDir = path.resolve("workspaces", u);
+                if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
+            }
+        } catch (e) {}
         await webServer.close();
     }
 }

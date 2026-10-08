@@ -96,6 +96,7 @@ async function runTests() {
     };
     apply(mockCtx);
 
+    let testUser = `dev_${Date.now().toString().slice(-4)}`;
     try {
         // 1. Test status route
         console.log("\n[1] Testing GET /api/user-manager/status...");
@@ -140,7 +141,6 @@ async function runTests() {
             throw new Error("Auth me with bearer failed");
 
         // 5. Test Register a new user
-        const testUser = `dev_${Date.now().toString().slice(-4)}`;
         console.log(`\n[5] Testing POST /api/auth/register for user '${testUser}'...`);
         const registerRes = await request(TEST_PORT, "POST", "/api/auth/register", {
             username: testUser,
@@ -199,6 +199,15 @@ async function runTests() {
         console.log("🎉 TẤT CẢ CÁC BÀI TEST AUTH & DATABASE ĐỀU PASS 100%!");
         console.log("======================================================\n");
     } finally {
+        try {
+            const { initDatabase } = await import("./lib/db.js");
+            const fs = await import("node:fs");
+            const path = await import("node:path");
+            const db = initDatabase();
+            db.prepare("DELETE FROM users WHERE username = ?").run(testUser);
+            const userDir = path.resolve("workspaces", testUser);
+            if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
+        } catch (e) {}
         await webServer.close();
     }
 }
