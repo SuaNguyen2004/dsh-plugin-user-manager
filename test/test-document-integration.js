@@ -3,8 +3,9 @@ import path from "node:path";
 import assert from "node:assert";
 import { extractDocument, DocumentExtractionError, MAX_FILE_SIZE_BYTES } from "../lib/document-extractor.js";
 import { getUserWorkspaceDir, checkDocumentAccess, getOwnerOfSession } from "../lib/workspace.js";
-import { recordAttachment, checkAttachmentOwnership, initDatabase, findUserByUsername, createUser } from "../lib/db.js";
+import { recordAttachment, checkAttachmentOwnership, initDatabase, findUserByUsername, createUser, recordUserSession } from "../lib/db.js";
 import { createReadDocumentTool, executeReadDocument } from "../lib/document-tool.js";
+import { buildScannedPdfBuffer } from "./fixtures.js";
 
 const PLUGIN_ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -105,17 +106,13 @@ async function runTests() {
 
     // 1.5 Báo rõ ràng khi gặp PDF Scan (không có text layer)
     const mockScannedPdf = path.join(dirA, "mock_scanned.pdf");
-    // Create minimal valid empty PDF with no text elements
-    const minimalPdfBytes = Buffer.from(
-        "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n",
-    );
-    fs.writeFileSync(mockScannedPdf, minimalPdfBytes);
+    fs.writeFileSync(mockScannedPdf, buildScannedPdfBuffer());
 
     await test("1.5 Phát hiện PDF scan và báo rõ ràng chưa hỗ trợ OCR", async () => {
         const res = await extractDocument(mockScannedPdf);
         assert.strictEqual(res.format, "PDF");
         assert.strictEqual(res.totalCharacters, 0);
-        assert.ok(res.note.includes("chưa có lớp văn bản số để trích xuất (chưa hỗ trợ OCR)"));
+        assert.ok(res.note.includes("cần OCR"));
     });
 
     // 1.6 Báo lỗi định dạng không hỗ trợ & file nhị phân giả mạo TXT
@@ -138,6 +135,8 @@ async function runTests() {
     // Ghi nhận file đính kèm thuộc sở hữu của User A
     const fakeSessionA = "session-nta-test-doc-001";
     const fakeSessionB = "session-nva-test-doc-002";
+    recordUserSession(fakeSessionA, userA, 'user-workspace-' + userA);
+    recordUserSession(fakeSessionB, userB, 'user-workspace-' + userB);
     const attachmentUserA = sampleDocxAttachment;
 
     recordAttachment({
@@ -190,7 +189,7 @@ async function runTests() {
             assert.fail("User B không được phép đọc attachment của User A");
         } catch (e) {
             assert.strictEqual(e.status, 403);
-            assert.ok(e.message.includes('không thuộc về phiên làm việc của người dùng "nva"'));
+            assert.ok(e.message.includes('Truy cập bị từ chối'));
         }
     });
 

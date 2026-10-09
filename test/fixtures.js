@@ -217,10 +217,38 @@ export function buildBlankPdfBuffer() {
 }
 
 /**
- * 6. Generate Scanned PDF (1 page with drawing/vector graphics operator, NO text layer)
+ * 6. Generate Scanned PDF (1 page with real inline image bitmap, NO text layer)
  */
 export function buildScannedPdfBuffer() {
-    // Stream contains rectangle drawing operators: re, f (fill), but no BT/ET or text
+    const imgStream = "q 50 0 0 50 100 100 cm\nBI\n/W 1\n/H 1\n/CS /DeviceGray\n/BPC 8\nID\n\xffEI\nQ";
+
+    let pdf = "%PDF-1.4\n";
+    const offsets = [];
+
+    function addObj(content) {
+        offsets.push(pdf.length);
+        pdf += content + "\n";
+    }
+
+    addObj("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj");
+    addObj("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj");
+    addObj("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj");
+    addObj(`4 0 obj\n<< /Length ${imgStream.length} >>\nstream\n${imgStream}\nendstream\nendobj`);
+
+    const xrefOffset = pdf.length;
+    pdf += "xref\n0 5\n0000000000 65535 f \n";
+    for (const off of offsets) {
+        pdf += String(off).padStart(10, "0") + " 00000 n \n";
+    }
+    pdf += `trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+    return Buffer.from(pdf, "utf8");
+}
+
+/**
+ * 6b. Generate Vector PDF (1 page with vector shapes, NO text layer and NO images)
+ */
+export function buildVectorNoTextPdfBuffer() {
     const graphicsStream = "100 100 200 200 re f";
 
     let pdf = "%PDF-1.4\n";
@@ -283,6 +311,44 @@ export function buildCorruptedBuffer() {
 }
 
 /**
+ * 9. Generate Large DOCX file (>100KB text payload) for IPC transmission tests
+ */
+export function buildLargeDocxBuffer(paragraphCount = 500) {
+    const contentTypes =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+        '</Types>';
+
+    const rels =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+        '</Relationships>';
+
+    const paragraphs = [];
+    for (let i = 1; i <= paragraphCount; i++) {
+        paragraphs.push(`<w:p><w:r><w:t>Đoạn văn ${i}: Nội dung tài liệu kiểm tra dung lượng lớn qua worker IPC với dữ liệu tiếng Việt đầy đủ.</w:t></w:r></w:p>`);
+    }
+
+    const documentXml =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+        '<w:body>' +
+        paragraphs.join('') +
+        '</w:body>' +
+        '</w:document>';
+
+    return createZipArchive([
+        { name: '[Content_Types].xml', data: contentTypes },
+        { name: '_rels/.rels', data: rels },
+        { name: 'word/document.xml', data: documentXml }
+    ]);
+}
+
+/**
  * Write all synthetic test fixtures into target directory
  */
 export function writeAllFixtures(targetDir) {
@@ -296,6 +362,7 @@ export function writeAllFixtures(targetDir) {
         txtBom: path.join(targetDir, "sample_bom.txt"),
         txtInvalidUtf8: path.join(targetDir, "sample_invalid_utf8.txt"),
         pdfBlank: path.join(targetDir, "sample_blank.pdf"),
+        pdfVectorNoText: path.join(targetDir, "sample_vector_notext.pdf"),
         pdfScanned: path.join(targetDir, "sample_scanned.pdf"),
         pdfPassword: path.join(targetDir, "sample_password.pdf"),
         pdfCorrupt: path.join(targetDir, "sample_corrupt.pdf"),
@@ -308,6 +375,7 @@ export function writeAllFixtures(targetDir) {
     fs.writeFileSync(files.txtBom, buildVietnameseBomTxtBuffer());
     fs.writeFileSync(files.txtInvalidUtf8, buildInvalidUtf8NoNullBuffer());
     fs.writeFileSync(files.pdfBlank, buildBlankPdfBuffer());
+    fs.writeFileSync(files.pdfVectorNoText, buildVectorNoTextPdfBuffer());
     fs.writeFileSync(files.pdfScanned, buildScannedPdfBuffer());
     fs.writeFileSync(files.pdfPassword, buildPasswordProtectedPdfBuffer());
     fs.writeFileSync(files.pdfCorrupt, buildCorruptedBuffer());

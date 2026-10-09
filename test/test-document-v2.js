@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import assert from 'node:assert';
-import { writeAllFixtures } from './fixtures.js';
+import { writeAllFixtures, buildLargeDocxBuffer } from './fixtures.js';
 
 // Setup test isolation environment variables before loading plugin modules
 const TEST_ROOT = path.resolve('./test/.tmp-test-suite');
@@ -45,6 +45,7 @@ import {
 } from '../lib/workspace.js';
 import {
   extractDocument,
+  runInWorkerWithTimeout,
   DocumentExtractionError,
   MAX_FILE_SIZE_BYTES,
   MAX_CHUNK_LIMIT
@@ -257,6 +258,14 @@ async function runComprehensiveTests() {
     assert.ok(res.note.includes('scan') && res.note.includes('OCR'), `Note phải nêu rõ scan và OCR: ${res.note}`);
   });
 
+  await test('1.7b PDF: Phân biệt PDF chỉ có hình vẽ vector (không báo scan, báo cần OCR)', async () => {
+    const res = await extractDocument(fixtures.pdfVectorNoText);
+    assert.strictEqual(res.format, 'PDF');
+    assert.strictEqual(res.totalCharacters, 0);
+    assert.ok(res.note.includes('OCR'), `Note phải đề cập OCR: ${res.note}`);
+    assert.ok(!res.note.includes('scan'), 'Không được nhầm vector graphics thành PDF scan');
+  });
+
   await test('1.8 PDF: Báo lỗi PASSWORD_PROTECTED khi file có mật khẩu bảo vệ', async () => {
     await assert.rejects(
       async () => await extractDocument(fixtures.pdfPassword),
@@ -327,6 +336,105 @@ async function runComprehensiveTests() {
     const chunk2 = await extractDocument(fixtures.docxTable, { offset: 50, limit: 50 });
     assert.strictEqual(chunk2.offset, 50);
     assert.notStrictEqual(chunk1.content, chunk2.content);
+  });
+
+  await test('1.13 Worker: Truyền đầy đủ dữ liệu lớn qua IPC và hủy tiến trình khi timeout', async () => {
+    // 1. Tạo file DOCX lớn (>100KB văn bản) để test truyền tải qua worker IPC
+    const largeDocxPath = path.join(TEST_ROOT, 'large_payload.docx');
+    const largeDocxBuffer = buildLargeDocxBuffer(600);
+    fs.writeFileSync(largeDocxPath, largeDocxBuffer);
+
+    // Kiểm tra worker trích xuất thành công và truyền đầy đủ dữ liệu lớn qua IPC
+    const workerResult = await runInWorkerWithTimeout({ filePath: largeDocxPath, format: 'DOCX' });
+    assert.strictEqual(workerResult.format, 'DOCX');
+    assert.ok(workerResult.fullText.length > 50000, 'Dữ liệu trích xuất lớn qua IPC phải đầy đủ');
+    assert.ok(workerResult.fullText.includes('Đoạn văn 600:'), 'Phải chứa đoạn văn cuối cùng');
+
+    // Kiểm tra extractDocument bọc worker cũng trả về totalCharacters đầy đủ
+    const res = await extractDocument(largeDocxPath);
+    assert.strictEqual(res.format, 'DOCX');
+    assert.strictEqual(res.totalCharacters, workerResult.fullText.length);
+    assert.strictEqual(res.hasMore, true);
+
+    // 2. Kiểm tra timeout: tiến trình worker bị dừng/hủy khi quá thời gian
+    await assert.rejects(
+      async () => await runInWorkerWithTimeout({ filePath: largeDocxPath, format: 'DOCX' }, 1),
+      (err) => {
+        assert.strictEqual(err.code, 'TIMEOUT');
+        assert.ok(err.message.includes('vượt quá giới hạn'));
+        return true;
+      }
+    );
+  });
+
+  await test('1.14 Migration DB: Xử lý trùng lặp trong transaction, bảo toàn quyền khác nhau', async () => {
+    const { DatabaseSync } = await import('node:sqlite');
+    const legacyDbPath = path.join(TEST_ROOT, 'legacy_test.db');
+    const db = new DatabaseSync(legacyDbPath);
+
+    // Tạo bảng attachments cũ chưa có unique index
+    db.exec(`
+      CREATE TABLE attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attachment_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL DEFAULT 0,
+        session_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Chèn 2 bản ghi TRÙNG TƯƠNG ĐƯƠNG (cùng user, session, attachment_id, file_path)
+    db.prepare(`
+      INSERT INTO attachments (attachment_id, file_name, file_size, session_id, username, file_path)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('att-dup-1', 'test.pdf', 100, 'sess-1', 'userA', 'C:\\files\\test.pdf');
+
+    db.prepare(`
+      INSERT INTO attachments (attachment_id, file_name, file_size, session_id, username, file_path)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('att-dup-1', 'test.pdf', 100, 'sess-1', 'userA', 'C:\\files\\test.pdf');
+
+    // Chèn 2 bản ghi COLLISION TRÙNG attachment_id nhưng KHÁC file_path (phải bảo toàn cả 2!)
+    db.prepare(`
+      INSERT INTO attachments (attachment_id, file_name, file_size, session_id, username, file_path)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('att-dup-collision', 'file1.pdf', 200, 'sess-2', 'userA', 'C:\\files\\path_one.pdf');
+
+    db.prepare(`
+      INSERT INTO attachments (attachment_id, file_name, file_size, session_id, username, file_path)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('att-dup-collision', 'file2.pdf', 300, 'sess-2', 'userA', 'C:\\files\\path_two.pdf');
+
+    db.close();
+
+    // Mở DB qua initDatabase (sẽ tự động chạy migration setupSchema an toàn)
+    const migratedDb = initDatabase(legacyDbPath);
+
+    // Kiểm tra kết quả
+    const rows = migratedDb.prepare('SELECT * FROM attachments ORDER BY id ASC').all();
+
+    // Bản ghi trùng tương đương chỉ còn lại 1
+    const exactDups = rows.filter(r => r.file_path === 'C:\\files\\test.pdf');
+    assert.strictEqual(exactDups.length, 1, 'Bản ghi trùng tương đương chỉ giữ lại 1 bản ghi');
+
+    // Hai bản ghi có file_path khác nhau đều được giữ lại (bảo toàn quyền cho cả 2 file)
+    const pathOne = rows.find(r => r.file_path === 'C:\\files\\path_one.pdf');
+    const pathTwo = rows.find(r => r.file_path === 'C:\\files\\path_two.pdf');
+    assert.ok(pathOne, 'Bản ghi file_path thứ nhất phải được giữ lại');
+    assert.ok(pathTwo, 'Bản ghi file_path thứ hai phải được giữ lại');
+    assert.notStrictEqual(pathOne.attachment_id, pathTwo.attachment_id, 'AttachmentId bị trùng đã được phân biệt để bảo toàn unique index');
+
+    // Unique index phải tồn tại và hoạt động
+    const indexInfo = migratedDb.prepare(`PRAGMA index_list('attachments')`).all();
+    const hasUnique = indexInfo.some(idx => idx.name === 'idx_attachments_user_session_id' && idx.unique === 1);
+    assert.strictEqual(hasUnique, true, 'Unique index idx_attachments_user_session_id phải được tạo thành công');
+
+    closeDatabase();
+    // Khôi phục lại DB chính của test suite
+    initDatabase(TEST_DB_PATH);
   });
 
   // =========================================================================
@@ -458,6 +566,29 @@ async function runComprehensiveTests() {
     recordUserSession('session-trusted-a', 'test_user_a', 'user-workspace-test_user_a');
     assert.strictEqual(getOwnerOfSession('session-trusted-a'), 'test_user_a');
     assert.strictEqual(getOwnerOfSession('session-unknown-random'), null);
+  });
+
+  await test('2.11 recordUserSession: Từ chối đổi chủ khi session đã thuộc user khác', async () => {
+    // Session session-trusted-a đã thuộc test_user_a
+    assert.throws(
+      () => recordUserSession('session-trusted-a', 'test_user_b', 'user-workspace-test_user_b'),
+      (err) => {
+        assert.strictEqual(err.status, 403);
+        assert.strictEqual(err.code, 'SESSION_OWNERSHIP_CONFLICT');
+        return true;
+      }
+    );
+    // Chủ sở hữu vẫn bảo toàn là test_user_a
+    assert.strictEqual(getOwnerOfSession('session-trusted-a'), 'test_user_a');
+  });
+
+  await test('2.12 getOwnerOfSession: Không dùng tên thư mục session để xác lập quyền', async () => {
+    // Tạo thư mục giả trên đĩa có tên format -workspaces-test_user_b--/session-unrecorded-fake
+    const fakeDiskDir = path.join(TEST_DSH_HOME, 'sessions', '-workspaces-test_user_b--', 'session-unrecorded-fake');
+    fs.mkdirSync(fakeDiskDir, { recursive: true });
+
+    // Không tồn tại trong SQLite hay workspace.json -> phải trả về null
+    assert.strictEqual(getOwnerOfSession('session-unrecorded-fake'), null);
   });
 
   // =========================================================================
@@ -618,6 +749,80 @@ async function runComprehensiveTests() {
   await test('3.7 Đảm bảo metadata chỉ ghi 1 lần sau khi upload thành công (không trùng lặp)', async () => {
     const userAAttachments = findAttachment('multipage.pdf', 'test_user_a');
     assert.ok(userAAttachments !== null, 'Phải tìm thấy attachment của User A');
+  });
+
+  await test('3.8 Chặn Tạo Session: Từ chối yêu cầu chưa đăng nhập (401)', async () => {
+    const res = await httpRequest(
+      port,
+      'POST',
+      '/api/session/create',
+      {
+        type: 'client-request',
+        rpcId: 'rpc-unauth-test',
+        method: 'session/create',
+        payload: { args: { request: {} } }
+      }
+    );
+
+    assert.strictEqual(res.status, 401);
+  });
+
+  await test('3.9 Chặn Tạo Session: User A không thể tạo session trong workspace của User B', async () => {
+    const res = await httpRequest(
+      port,
+      'POST',
+      '/api/session/create',
+      {
+        type: 'client-request',
+        rpcId: 'rpc-cross-ws',
+        method: 'session/create',
+        payload: {
+          args: {
+            request: {
+              workspaceId: 'user-workspace-test_user_b'
+            }
+          }
+        }
+      },
+      { 'Cookie': `dsh_user_token=${sessionTokenA}` }
+    );
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.json.result.ok, false);
+    assert.strictEqual(res.json.result.error.code, 'session/forbidden');
+  });
+
+  await test('3.10 Luồng tạo session DSH: User A tạo session mới thành công và server tự gán chủ sở hữu', async () => {
+    // Lưu ý: KHÔNG gọi recordUserSession trước! Luồng tạo session phải tự động gán.
+    const res = await httpRequest(
+      port,
+      'POST',
+      '/api/session/create',
+      {
+        type: 'client-request',
+        rpcId: 'rpc-create-valid',
+        method: 'session/create',
+        payload: {
+          args: {
+            request: {}
+          }
+        }
+      },
+      { 'Cookie': `dsh_user_token=${sessionTokenA}` }
+    );
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.json.result.ok, true);
+    const newSessionId = res.json.result.value.sessionId;
+    assert.ok(newSessionId, 'Phải trả về sessionId hợp lệ');
+
+    // Kiểm tra chủ sở hữu session được tự động ghi nhận trong SQLite DB
+    const dbOwner = getOwnerOfSessionFromDb(newSessionId);
+    assert.strictEqual(dbOwner, 'test_user_a', 'Chủ sở hữu trong user_sessions DB phải là test_user_a');
+
+    // Tra cứu qua hàm getOwnerOfSession cũng phải ra test_user_a
+    const resolvedOwner = getOwnerOfSession(newSessionId);
+    assert.strictEqual(resolvedOwner, 'test_user_a', 'getOwnerOfSession phải trả về test_user_a');
   });
 
   // =========================================================================

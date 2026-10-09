@@ -6,5 +6,6 @@ node_modules
 data/*.db*
 data/*.sqlite*
 workspaces/
+test/.tmp-test-suite/
 
 
