@@ -79,6 +79,20 @@ node test-quota.js
 node test-native-approval.js
 ```
 
+## 🛡️ Chế độ Document-Only & Giới hạn Kỹ thuật
+
+- **Chế độ Document-Only cho người dùng thông thường**:
+  - Người dùng thông thường (`role: 'user'`) chỉ được phép tương tác hội thoại và đọc tài liệu văn bản thông qua công cụ chuyên dụng `read_document` (hỗ trợ PDF có text layer, DOCX, TXT) với xác thực quyền sở hữu từ máy chủ.
+  - Mọi công cụ shell (`pwsh`, `bash`, `cmd`), thực thi mã nguồn (`run_code`, `subprocess`) và công cụ filesystem trực tiếp (`read`, `write`, `edit`, `fs_search`) đều bị **khóa cứng ở tầng runtime** (`ctx.tools.guard`), bất kể lệnh vô hại hay script nội bộ.
+- **Tài liệu PDF Scanned**:
+  - Bản phát hành hiện tại chỉ trích xuất text layer kỹ thuật số; **chưa tích hợp OCR** cho tài liệu scan dạng hình ảnh thuần túy.
+- **Ranh giới Sandbox & Phạm vi kiểm soát**:
+  - Bản phát hành hiện tại thực hiện kiểm soát và cô lập tại tầng ToolRuntime của DSH/Cordis.
+  - Bản này **chưa có cô lập cấp hệ điều hành (OS)** (không tạo Windows Local User riêng hay container Docker cho từng session).
+  - Hệ thống bảo vệ các route REST và luồng tool đã được plugin kiểm soát, nhưng **chưa xác minh toàn bộ kênh ngoài ToolRuntime** (chẳng hạn các socket hoặc extension bên thứ ba chạy ngoài Cordis Tool Engine).
+- **Quyền hạn Quản trị viên (Admin)**:
+  - Tài khoản Admin đã xác thực qua cơ sở dữ liệu máy chủ giữ toàn quyền thực thi công cụ shell và quản trị hệ thống. Quyền admin không thể bị mạo nhận hoặc leo thang thông qua prompt/header.
+
 ## 📄 License
 
 MIT

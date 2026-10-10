@@ -420,26 +420,43 @@
         }
         if (data.user) {
           localStorage.setItem('dsh_user_info', JSON.stringify(data.user));
+          localStorage.setItem('dsh_last_username', data.user.username);
         }
 
-        // Clear previous session pointers
-        localStorage.removeItem('dsh.sessions.current');
         sessionStorage.clear();
 
-        showAlert('Đăng nhập thành công! Đang chuyển hướng vào không gian làm việc...', 'success');
-
-        // Khởi tạo workspace
+        // Khởi tạo workspace và chuẩn bị session cho người dùng
         try {
-          await fetch('/api/workspace/user-init', {
+          const initRes = await fetch('/api/workspace/user-init', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + data.token }
           });
-        } catch (err) {}
+          const initData = await initRes.json().catch(() => ({}));
+          if (!initRes.ok || !initData || !initData.success || !initData.sessionId) {
+            showAlert(initData.error || 'Khởi tạo phiên làm việc DSH thất bại. Vui lòng thử lại.');
+            btn.disabled = false;
+            btn.textContent = 'Đăng nhập vào DSH';
+            return;
+          }
+
+          const sessionPayload = JSON.stringify({ sessionId: initData.sessionId });
+          localStorage.setItem('dsh.sessions.current', sessionPayload);
+          if (data.user && data.user.username) {
+            localStorage.setItem('dsh.sessions.current.' + data.user.username, sessionPayload);
+          }
+        } catch (err) {
+          showAlert('Lỗi kết nối khi khởi tạo phiên làm việc: ' + err.message);
+          btn.disabled = false;
+          btn.textContent = 'Đăng nhập vào DSH';
+          return;
+        }
+
+        showAlert('Đăng nhập thành công! Đang chuyển hướng vào không gian làm việc...', 'success');
 
         // Chuyển hướng về trang chủ DSH
         setTimeout(() => {
           window.location.href = '/';
-        }, 500);
+        }, 300);
 
       } catch (err) {
         showAlert('Lỗi kết nối tới máy chủ: ' + err.message);

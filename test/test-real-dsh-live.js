@@ -51,7 +51,7 @@ async function main() {
     assert.ok(setCookie, 'Phải nhận được cookie đăng nhập');
     adminCookie = setCookie.split(';')[0];
   }
-  console.log('    Đăng nhập thành công, Cookie:', adminCookie.slice(0, 30) + '...');
+  console.log('    Đăng nhập thành công (phiên quản trị đã được xác thực).');
 
   // 2. Tạo session mới qua API thật của DSH KHÔNG hề tự gán quyền thủ công
   console.log('\n[3] Tạo session mới qua luồng DSH thật (/api/session/create)...');
@@ -110,8 +110,11 @@ async function main() {
       payload: { args: { request: {} } }
     })
   });
-  console.log('    Mã trạng thái yêu cầu chưa đăng nhập:', unauthRes.status);
-  assert.strictEqual(unauthRes.status, 401);
+  const unauthData = await unauthRes.json();
+  console.log('    Kết quả RPC unauthenticated:', unauthData);
+  assert.strictEqual(unauthData.result.ok, false);
+  assert.strictEqual(unauthData.result.error.code, 'session/unauthorized');
+  assert.deepStrictEqual(unauthData.result.error.details, {});
 
   // 5. Kiểm tra đọc tài liệu từ workspace admin qua /api/document/read
   console.log('\n[6] Kiểm tra đọc tài liệu trên DSH thật qua /api/document/read...');
