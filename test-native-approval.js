@@ -96,7 +96,7 @@ async function request(port, method, path, data = null, headers = {}) {
 async function runNativeApprovalTests() {
   console.log('\n--- BẮT ĐẦU TEST NATIVE DSH INTEGRATION & APPROVAL FLOW ---');
   const webServer = new MockWebServer();
-  const TEST_PORT = 49155;
+  const TEST_PORT = Number(process.env.TEST_PORT) || 34155;
   await webServer.listen(TEST_PORT);
 
   const mockCtx = {

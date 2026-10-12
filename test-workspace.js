@@ -83,7 +83,7 @@ async function request(port, method, path, data = null, headers = {}) {
 async function runWorkspaceTests() {
     console.log("\n--- BẮT ĐẦU TEST TOÀN DIỆN WORKSPACE & SANDBOX ISOLATION ---");
     const webServer = new MockWebServer();
-    const TEST_PORT = 49153;
+    const TEST_PORT = Number(process.env.TEST_PORT) || 34153;
     await webServer.listen(TEST_PORT);
 
     const mockCtx = {

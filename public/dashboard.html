@@ -378,82 +378,31 @@
     <!-- LOGGED IN: Main Dashboard -->
     <div id="dashboardSection" style="display: none; display: flex; flex-direction: column; gap: 24px;">
 
-      <!-- Row 1: Quota & Metering -->
-      <div class="grid-2">
-        <!-- Card 1: Token Quota Status -->
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Hạn mức Token (Quota Metering)</h3>
-            <button class="btn-secondary" onclick="loadQuota()">Làm mới</button>
-          </div>
-
-          <div>
-            <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
-              <span>Tỷ lệ sử dụng:</span>
-              <strong id="quotaPercentDisplay">0%</strong>
-            </div>
-            <div class="progress-bar-container">
-              <div id="quotaProgressFill" class="progress-fill"></div>
-            </div>
-          </div>
-
-          <div class="stats-row">
-            <div class="stat-box">
-              <span style="font-size: 11px; color: var(--text-muted);">Tổng hạn ngạch</span>
-              <div class="stat-num" id="statQuota" style="color: var(--accent);">0</div>
-            </div>
-            <div class="stat-box">
-              <span style="font-size: 11px; color: var(--text-muted);">Đã tiêu thụ</span>
-              <div class="stat-num" id="statUsed" style="color: var(--warning);">0</div>
-            </div>
-            <div class="stat-box">
-              <span style="font-size: 11px; color: var(--text-muted);">Còn lại</span>
-              <div class="stat-num" id="statRemaining" style="color: var(--success);">0</div>
-            </div>
-          </div>
-
-          <!-- Consume test -->
-          <div style="background: var(--bg-tertiary); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 10px;">
-            <label style="font-size: 12px; font-weight: 600;">Mô phỏng tiêu thụ token:</label>
-            <div style="display: flex; gap: 8px;">
-              <input type="number" id="consumeAmount" placeholder="Số token" value="15000" style="flex: 1;">
-              <select id="consumeAction" style="flex: 1;">
-                <option value="deepseek_chat">Chat hội thoại (Chat)</option>
-                <option value="deepseek_reasoner">Suy luận sâu (Reasoning)</option>
-                <option value="code_execution">Chạy mã lệnh (Tool Call)</option>
-              </select>
-              <button class="btn-primary" onclick="consumeTokens()">Trừ Token</button>
-            </div>
-            <span style="font-size: 11px; color: var(--text-muted);">Thử nhập số token lớn hơn "Còn lại" để thấy hệ thống chặn 402 Quota Exceeded!</span>
-          </div>
+      <!-- Card: Workspace Sandbox File Manager -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Không gian làm việc (Workspace Sandbox)</h3>
+          <button class="btn-secondary" onclick="loadFiles()">Xem file</button>
         </div>
 
-        <!-- Card 2: Workspace Sandbox File Manager -->
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Không gian làm việc (Workspace Sandbox)</h3>
-            <button class="btn-secondary" onclick="loadFiles()">Xem file</button>
-          </div>
+        <div style="font-size: 12px; color: var(--text-muted);">
+          Thư mục cô lập: <code id="workspacePathDisplay" style="color: var(--accent);">workspaces/username</code>
+        </div>
 
-          <div style="font-size: 12px; color: var(--text-muted);">
-            Thư mục cô lập: <code id="workspacePathDisplay" style="color: var(--accent);">workspaces/username</code>
-          </div>
+        <div class="file-tree" id="fileListContainer">
+          <div style="color: var(--text-muted); text-align: center; padding: 20px;">Đang tải danh sách file...</div>
+        </div>
 
-          <div class="file-tree" id="fileListContainer">
-            <div style="color: var(--text-muted); text-align: center; padding: 20px;">Đang tải danh sách file...</div>
+        <!-- File actions -->
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="filePathInput" placeholder="Tên file (vd: src/index.js, test.txt)">
+            <button class="btn-secondary" onclick="readFile()">Đọc file</button>
           </div>
-
-          <!-- File actions -->
-          <div style="display: flex; flex-direction: column; gap: 10px;">
-            <div style="display: flex; gap: 8px;">
-              <input type="text" id="filePathInput" placeholder="Tên file (vd: src/index.js, test.txt)">
-              <button class="btn-secondary" onclick="readFile()">Đọc file</button>
-            </div>
-            <textarea id="fileContentInput" rows="3" placeholder="Nội dung file..."></textarea>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <button class="btn-primary" onclick="saveFile()">Lưu vào Workspace</button>
-              <button class="btn-danger" onclick="testPathTraversalAttack()">Thử hack (Path Traversal)</button>
-            </div>
+          <textarea id="fileContentInput" rows="3" placeholder="Nội dung file..."></textarea>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <button class="btn-primary" onclick="saveFile()">Lưu vào Workspace</button>
+            <button class="btn-danger" onclick="testPathTraversalAttack()">Thử hack (Path Traversal)</button>
           </div>
         </div>
       </div>
@@ -472,10 +421,9 @@
                 <th>ID</th>
                 <th>Username</th>
                 <th>Vai trò</th>
-                <th>Hạn ngạch (Quota)</th>
-                <th>Đã dùng</th>
-                <th>Tỷ lệ</th>
-                <th>Thao tác</th>
+                <th>Trạng thái</th>
+                <th>Thư mục Workspace</th>
+                <th>Ngày tạo</th>
               </tr>
             </thead>
             <tbody id="adminUsersTableBody">
@@ -599,7 +547,6 @@
         document.getElementById('adminPanel').style.display = 'none';
       }
 
-      loadQuota();
       loadFiles();
     }
 
@@ -626,68 +573,7 @@
       return token ? { 'Authorization': `Bearer ${token}` } : {};
     }
 
-    // 4. Load Quota
-    async function loadQuota() {
-      try {
-        const res = await fetch(`${BASE_URL}/api/user/quota`, {
-          credentials: 'include',
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-
-        document.getElementById('statQuota').textContent = Number(data.token_quota).toLocaleString();
-        document.getElementById('statUsed').textContent = Number(data.tokens_used).toLocaleString();
-        document.getElementById('statRemaining').textContent = Number(data.remaining).toLocaleString();
-
-        const pct = Math.min(100, data.percent_used || 0);
-        document.getElementById('quotaPercentDisplay').textContent = `${pct}%`;
-        const fill = document.getElementById('quotaProgressFill');
-        fill.style.width = `${pct}%`;
-        fill.style.backgroundColor = pct > 80 ? 'var(--danger)' : (pct > 50 ? 'var(--warning)' : 'var(--success)');
-      } catch (err) {
-        showToast(`Lỗi lấy quota: ${err.message}`, 'error');
-      }
-    }
-
-    // 5. Consume Tokens
-    async function consumeTokens() {
-      const amount = Number(document.getElementById('consumeAmount').value);
-      const action = document.getElementById('consumeAction').value;
-
-      if (!amount || amount <= 0) {
-        showToast('Vui lòng nhập số token dương hợp lệ!', 'warning');
-        return;
-      }
-
-      try {
-        const res = await fetch(`${BASE_URL}/api/user/consume`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            ...getAuthHeaders()
-          },
-          body: JSON.stringify({ tokens: amount, action })
-        });
-
-        const data = await res.json();
-        if (res.status === 402) {
-          showToast(`❌ Cạn hạn ngạch: Đã dùng ${data.tokens_used}/${data.token_quota}. Cần thêm token!`, 'error');
-          loadQuota();
-          return;
-        }
-
-        if (!res.ok) throw new Error(data.error);
-
-        showToast(`Đã tiêu thụ thành công ${amount.toLocaleString()} token (${action})!`, 'success');
-        loadQuota();
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    }
-
-    // 6. Load Files
+    // 4. Load Files
     async function loadFiles() {
       const container = document.getElementById('fileListContainer');
       try {
@@ -801,7 +687,7 @@
       }
     }
 
-    // 10. Load Admin Users
+    // 8. Load Admin Users
     async function loadAdminUsers() {
       const tbody = document.getElementById('adminUsersTableBody');
       try {
@@ -815,75 +701,21 @@
         tbody.innerHTML = '';
         data.users.forEach(u => {
           const tr = document.createElement('tr');
-          const pct = u.token_quota > 0 ? ((u.tokens_used / u.token_quota) * 100).toFixed(1) : 0;
+          const roleClass = u.role === 'admin' ? 'role-admin' : 'role-user';
+          const status = u.status || 'active';
+          const statusBg = status === 'active' ? 'rgba(74, 222, 128, 0.15); color: #4ade80' : (status === 'pending' ? 'rgba(250, 204, 21, 0.15); color: #facc15' : 'rgba(248, 113, 113, 0.15); color: #f87171');
           tr.innerHTML = `
             <td>#${u.id}</td>
             <td><strong>${u.username}</strong></td>
-            <td><span class="role-tag role-${u.role}">${u.role}</span></td>
-            <td><code>${Number(u.token_quota).toLocaleString()}</code></td>
-            <td><code>${Number(u.tokens_used).toLocaleString()}</code></td>
-            <td>${pct}%</td>
-            <td>
-              <button class="btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="promptSetQuota('${u.username}', ${u.token_quota})">Sửa Quota</button>
-              <button class="btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="resetUsage('${u.username}')">Reset</button>
-            </td>
+            <td><span class="role-tag ${roleClass}">${u.role}</span></td>
+            <td><span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${statusBg}; font-weight: 500;">${status}</span></td>
+            <td><code style="font-size: 11px;">${u.workspace_path || '-'}</code></td>
+            <td style="font-size: 11px; color: var(--text-muted);">${u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
           `;
           tbody.appendChild(tr);
         });
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="7" style="color: var(--danger); text-align: center;">${err.message}</td></tr>`;
-      }
-    }
-
-    async function promptSetQuota(username, currentQuota) {
-      const newQuotaStr = prompt(`Nhập mức Quota mới cho user "${username}":`, currentQuota);
-      if (newQuotaStr === null) return;
-      const quota = Number(newQuotaStr);
-      if (isNaN(quota) || quota < 0) {
-        alert('Mức quota không hợp lệ!');
-        return;
-      }
-
-      try {
-        const res = await fetch(`${BASE_URL}/api/admin/quota`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            ...getAuthHeaders()
-          },
-          body: JSON.stringify({ username, quota })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-        showToast(`Đã nâng quota của ${username} lên ${quota.toLocaleString()}`, 'success');
-        loadAdminUsers();
-        if (currentUser && currentUser.username === username) loadQuota();
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    }
-
-    async function resetUsage(username) {
-      if (!confirm(`Bạn có chắc muốn reset số token đã dùng của user "${username}" về 0?`)) return;
-
-      try {
-        const res = await fetch(`${BASE_URL}/api/admin/reset-usage`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            ...getAuthHeaders()
-          },
-          body: JSON.stringify({ username })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-        showToast(`Đã reset token đã dùng của ${username} về 0!`, 'success');
-        loadAdminUsers();
-        if (currentUser && currentUser.username === username) loadQuota();
-      } catch (err) {
-        showToast(err.message, 'error');
+        tbody.innerHTML = `<tr><td colspan="6" style="color: var(--danger); text-align: center;">${err.message}</td></tr>`;
       }
     }
 

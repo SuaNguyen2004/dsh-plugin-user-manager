@@ -84,7 +84,7 @@ async function request(port, method, path, data = null, headers = {}) {
 async function runTests() {
     console.log("\n--- BẮT ĐẦU TEST TOÀN DIỆN AUTH & DATABASE ---");
     const webServer = new MockWebServer();
-    const TEST_PORT = 49152;
+    const TEST_PORT = Number(process.env.TEST_PORT) || 34152;
     await webServer.listen(TEST_PORT);
 
     // Apply plugin with mock context
