@@ -7,6 +7,10 @@
   "exports": {
     ".": "./lib/index.js"
   },
+  "scripts": {
+    "test": "node test/run-tests.js",
+    "test:unit": "node test/run-unit.js"
+  },
   "files": [
     "lib",
     "cordis.patch.yml",

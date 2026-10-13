@@ -1,5 +1,5 @@
 import http from "node:http";
-import { apply } from "./lib/index.js";
+import { apply } from "../../lib/index.js";
 
 class MockWebServer {
     constructor() {
@@ -134,7 +134,7 @@ async function runWorkspaceTests() {
         await request(TEST_PORT, "POST", "/api/auth/register", { username: userB, password: "password123" });
 
         // Approve both users
-        const { approveUser } = await import("./lib/db.js");
+        const { approveUser } = await import("../../lib/common/db.js");
         approveUser(userA);
         approveUser(userB);
 
@@ -272,8 +272,8 @@ async function runWorkspaceTests() {
         console.log("================================================================\n");
     } finally {
         try {
-            const { initDatabase } = await import("./lib/db.js");
-            const { cleanupUserWorkspaceAndSessions } = await import("./lib/workspace.js");
+            const { initDatabase } = await import("../../lib/common/db.js");
+            const { cleanupUserWorkspaceAndSessions } = await import("../../lib/user/workspace.js");
             const db = initDatabase();
             db.prepare("DELETE FROM users WHERE username IN (?, ?)").run(userA, userB);
             cleanupUserWorkspaceAndSessions(userA);

@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getOwnerOfSessionFromDb, initDatabase, findUserByUsername } from '../lib/db.js';
+import { getOwnerOfSessionFromDb, initDatabase, findUserByUsername } from '../../lib/common/db.js';
 
 const LIVE_DSH_URL = 'http://127.0.0.1:3088';
 

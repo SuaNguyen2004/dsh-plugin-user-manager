@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildMultiPagePdfBuffer } from './fixtures.js';
+import { buildMultiPagePdfBuffer } from '../helpers/fixtures.js';
 
 const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const DEBUG_PORT = 9222;

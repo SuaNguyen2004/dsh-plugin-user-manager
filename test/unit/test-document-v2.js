@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import assert from 'node:assert';
-import { writeAllFixtures, buildLargeDocxBuffer } from './fixtures.js';
+import { writeAllFixtures, buildLargeDocxBuffer } from '../helpers/fixtures.js';
 
 // Setup test isolation environment variables before loading plugin modules
 const TEST_ROOT = path.resolve('./test/.tmp-test-suite');
@@ -32,7 +32,7 @@ import {
   findAttachment,
   recordUserSession,
   getOwnerOfSessionFromDb
-} from '../lib/db.js';
+} from '../../lib/common/db.js';
 import {
   getUserWorkspaceDir,
   resolveSafePath,
@@ -42,25 +42,25 @@ import {
   getOwnerOfSession,
   syncDshUserWorkspaces,
   registerWorkspaceRoutes
-} from '../lib/workspace.js';
+} from '../../lib/user/workspace.js';
 import {
   extractDocument,
   runInWorkerWithTimeout,
   DocumentExtractionError,
   MAX_FILE_SIZE_BYTES,
   MAX_CHUNK_LIMIT
-} from '../lib/document-extractor.js';
+} from '../../lib/document/document-extractor.js';
 import {
   registerDocumentRoutes,
   setDocumentServiceContext,
   hookFileUploadsService,
   toolRegistrationStatus
-} from '../lib/document-service.js';
+} from '../../lib/document/document-service.js';
 import {
   createReadDocumentTool,
   executeReadDocument
-} from '../lib/document-tool.js';
-import { registerAuthRoutes } from '../lib/auth.js';
+} from '../../lib/document/document-tool.js';
+import { registerAuthRoutes } from '../../lib/common/auth.js';
 
 // Simple MockWebServer for HTTP integration tests
 class MockWebServer {

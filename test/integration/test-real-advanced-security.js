@@ -1,10 +1,10 @@
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { initDatabase, findUserByUsername, createUser, recordAttachment, getDb } from "../lib/db.js";
+import { initDatabase, findUserByUsername, createUser, recordAttachment, getDb } from "../../lib/common/db.js";
 
 const LIVE_DSH_URL = "http://127.0.0.1:3088";
-const PLUGIN_ROOT = path.resolve(import.meta.dirname, "..");
+const PLUGIN_ROOT = path.resolve(import.meta.dirname, "../..");
 const DB_PATH = path.join(PLUGIN_ROOT, "data", "users.db");
 const DSH_HOME = "C:\\Users\\Admin\\.dsh-multiuser";
 const ATT_DIR = path.join(DSH_HOME, "attachments", "v1", "files");

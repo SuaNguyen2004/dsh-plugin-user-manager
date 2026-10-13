@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { getDb } from './lib/db.js';
+import { getDb } from '../../lib/common/db.js';
 
 function request(options, data = null) {
   return new Promise((resolve, reject) => {
@@ -212,7 +212,7 @@ async function runTests() {
 
   // Test 12: Verify user accounts nvs and nva exist and are active
   try {
-    const { findUserByUsername } = await import('./lib/db.js');
+    const { findUserByUsername } = await import('../../lib/common/db.js');
     const uNvs = findUserByUsername('nvs');
     const uNva = findUserByUsername('nva');
     assert(uNvs && uNvs.status === 'active', 'User nvs exists and is active');

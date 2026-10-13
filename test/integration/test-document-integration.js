@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert";
-import { extractDocument, DocumentExtractionError, MAX_FILE_SIZE_BYTES } from "../lib/document-extractor.js";
-import { getUserWorkspaceDir, checkDocumentAccess, getOwnerOfSession } from "../lib/workspace.js";
-import { recordAttachment, checkAttachmentOwnership, initDatabase, findUserByUsername, createUser, recordUserSession } from "../lib/db.js";
-import { createReadDocumentTool, executeReadDocument } from "../lib/document-tool.js";
-import { buildScannedPdfBuffer } from "./fixtures.js";
+import { extractDocument, DocumentExtractionError, MAX_FILE_SIZE_BYTES } from "../../lib/document/document-extractor.js";
+import { getUserWorkspaceDir, checkDocumentAccess, getOwnerOfSession } from "../../lib/user/workspace.js";
+import { recordAttachment, checkAttachmentOwnership, initDatabase, findUserByUsername, createUser, recordUserSession } from "../../lib/common/db.js";
+import { createReadDocumentTool, executeReadDocument } from "../../lib/document/document-tool.js";
+import { buildScannedPdfBuffer } from "../helpers/fixtures.js";
 
-const PLUGIN_ROOT = path.resolve(import.meta.dirname, "..");
+const PLUGIN_ROOT = path.resolve(import.meta.dirname, "../..");
 
 async function runTests() {
     console.log("===============================================================");

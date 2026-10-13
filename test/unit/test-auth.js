@@ -1,5 +1,5 @@
 import http from "node:http";
-import { apply } from "./lib/index.js";
+import { apply } from "../../lib/index.js";
 
 // Mock WebServer mimicking Cordis / @deepseek-ai/dsh-host-webserver
 class MockWebServer {
@@ -162,7 +162,7 @@ async function runTests() {
         if (duplicateRes.status !== 409) throw new Error("Duplicate register check failed");
 
         // 6.5 Admin approves user
-        const { approveUser } = await import("./lib/db.js");
+        const { approveUser } = await import("../../lib/common/db.js");
         approveUser(testUser);
 
         // 7. Test Login with new user
@@ -200,8 +200,8 @@ async function runTests() {
         console.log("======================================================\n");
     } finally {
         try {
-            const { initDatabase } = await import("./lib/db.js");
-            const { cleanupUserWorkspaceAndSessions } = await import("./lib/workspace.js");
+            const { initDatabase } = await import("../../lib/common/db.js");
+            const { cleanupUserWorkspaceAndSessions } = await import("../../lib/user/workspace.js");
             const db = initDatabase();
             db.prepare("DELETE FROM users WHERE username = ?").run(testUser);
             cleanupUserWorkspaceAndSessions(testUser);

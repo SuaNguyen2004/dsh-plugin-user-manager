@@ -52,25 +52,66 @@ dsh web
 ```
 Then visit `http://127.0.0.1:3088/` directly!
 
+## 📁 Cấu trúc Thư mục Dự án
+
+```text
+dsh-plugin-user-manager/
+├── lib/
+│   ├── index.js                  # Entrypoint chính của Cordis Plugin & re-exports
+│   ├── common/                   # [Chức năng Dùng chung & Cốt lõi]
+│   │   ├── db.js                 # SQLite database, schema, migrations, hashing
+│   │   └── auth.js               # Xác thực JWT, đăng nhập, đăng ký, middleware
+│   ├── admin/                    # [Chức năng Dành riêng cho Quản trị viên]
+│   │   └── model-guard.js        # Cấu hình Model, API Key, chặn user thường
+│   ├── user/                     # [Chức năng & Kiểm soát Người dùng]
+│   │   ├── workspace.js          # Không gian làm việc, cô lập tệp tin cá nhân
+│   │   └── security-guard.js     # Sandbox lệnh shell, Document-Only runtime guard
+│   ├── document/                 # [Chức năng Xử lý Tài liệu Đa định dạng]
+│   │   ├── document-service.js   # API upload, quản lý attachments & trích xuất
+│   │   ├── document-tool.js      # Định nghĩa Cordis Tool read_document
+│   │   ├── document-extractor.js # Trích xuất PDF, DOCX, TXT chuyên sâu
+│   │   └── document-worker.js    # Worker xử lý tài liệu đa luồng / timeout
+│   └── ui/                       # [Giao diện & Tiêm UI vào DSH]
+│       └── ui-injection.js       # Injected UI Login bar, Modal Admin, CSS rules
+│
+├── test/
+│   ├── run-tests.js              # Runner chạy toàn bộ test suites
+│   ├── run-unit.js               # Runner chạy riêng các bài Unit Test
+│   ├── unit/                     # [Unit Tests]
+│   │   ├── test-auth.js          # Test xác thực & phiên đăng nhập
+│   │   ├── test-workspace.js     # Test cô lập thư mục workspace & traversal
+│   │   ├── test-model-guard.js   # Test quản trị API key & chặn sửa model
+│   │   ├── test-native-approval.js # Test phê duyệt người dùng & native command
+│   │   ├── test-security-isolation.js # Test sandbox & phân quyền đa người dùng
+│   │   └── test-document-v2.js   # Test trích xuất & xử lý tài liệu V2
+│   ├── integration/              # [Integration Tests]
+│   │   ├── test-auth-flow.js     # Test luồng auth hoàn chỉnh trên DSH live
+│   │   ├── test-real-dsh-live.js # Test tương tác trực tiếp DSH port 3088
+│   │   ├── test-real-advanced-security.js # Test bảo mật nâng cao live
+│   │   ├── test-real-pwsh-guard.js # Test chặn powershell nguy hiểm
+│   │   ├── test-real-ui-full.js  # Test UI injection đầy đủ
+│   │   ├── test-document-integration.js # Test tích hợp xử lý tài liệu
+│   │   ├── test-document-only-runtime.js # Test runtime chế độ document-only
+│   │   └── test-comprehensive-non-tool-routes.js # Test rà soát bảo mật route REST
+│   └── helpers/                  # [Bộ Hỗ trợ Test]
+│       ├── fixtures.js           # Dữ liệu mẫu (PDF, DOCX mock)
+│       └── inspect-browser-flow.js # Script kiểm tra browser flow
+│
+├── data/                         # SQLite users.db (tự sinh, gitignored)
+├── public/                       # Dashboard fallback & login pages
+└── package.json                  # Cấu hình package, dependencies & scripts
+```
+
 ## 🧪 Testing
 
-Run automated tests:
+Chạy kiểm thử tự động với 1 lệnh:
 
 ```powershell
-# 1. Test Auth & Database
-node test-auth.js
+# Chạy toàn bộ test suites
+npm test
 
-# 2. Test Workspace Sandbox & Path Traversal Defense
-node test-workspace.js
-
-# 3. Test Native UI Injection & Approval Flow
-node test-native-approval.js
-
-# 4. Test Document-Only ToolRuntime Security
-node test/test-document-only-runtime.js
-
-# 5. Test Non-Tool REST Routes & Ownership Isolation
-node test/test-comprehensive-non-tool-routes.js
+# Hoặc chạy riêng các bài Unit Test
+npm run test:unit
 ```
 
 ## 🛡️ Chế độ Document-Only & Giới hạn Kỹ thuật

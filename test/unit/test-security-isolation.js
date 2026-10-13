@@ -7,19 +7,19 @@ import {
   createUser,
   recordUserSession,
   recordAttachment
-} from '../lib/db.js';
+} from '../../lib/common/db.js';
 import {
   getUserWorkspaceDir,
   getOwnerOfSession,
   checkDocumentAccess
-} from '../lib/workspace.js';
-import { executeReadDocument } from '../lib/document-tool.js';
+} from '../../lib/user/workspace.js';
+import { executeReadDocument } from '../../lib/document/document-tool.js';
 import {
   canonicalizePath,
   validateFileToolAccess,
   validateShellCommandAccess,
   setupToolSecurityGuard
-} from '../lib/security-guard.js';
+} from '../../lib/user/security-guard.js';
 
 // Setup isolated test directories
 const TEST_DIR = path.resolve('test', '.tmp-security-test');
@@ -364,12 +364,12 @@ async function runTests() {
   console.log('  [PASS] 4.2 ctx.tools.guard chặn thành công lệnh pwsh của User A vào attachment User B');
 
   const guardCall3 = registeredGuardFn({
-    name: 'read',
-    arguments: { file_path: fileA },
+    name: 'read_document',
+    arguments: { path: fileA },
     agent: { session: { header: { id: sessionNvs, cwd: wsNvs } } }
   });
-  assert.strictEqual(guardCall3, undefined, 'Guard phải cho phép tool read truy cập file hợp lệ của chính mình');
-  console.log('  [PASS] 4.3 ctx.tools.guard cho phép tool read truy cập file hợp lệ của User A');
+  assert.strictEqual(guardCall3, undefined, 'Guard phải cho phép tool read_document truy cập file hợp lệ của chính mình');
+  console.log('  [PASS] 4.3 ctx.tools.guard cho phép tool read_document truy cập file hợp lệ của User A');
 
   console.log('\n======================================================================');
   console.log('   KẾT QUẢ KIỂM THỬ BẢO MẬT: TẤT CẢ 26 BƯỚC KIỂM THỬ ĐỀU PASS!       ');
