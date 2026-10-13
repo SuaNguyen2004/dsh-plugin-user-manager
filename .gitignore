@@ -5,6 +5,7 @@ node_modules
 *.sqlite*
 data/*.db*
 data/*.sqlite*
+data/*.json
 workspaces/
 test/.tmp-test-suite/
 /test/chrome-profile/

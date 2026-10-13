@@ -37,6 +37,13 @@ Plugin for **DeepSeek Harness (DSH)** providing multi-user authentication, SQLit
     - `GET /api/workspace/files`
     - `GET /api/workspace/file?path=...`
     - `POST /api/workspace/file`
+- **API Key Pooling & 429 Auto-Recovery (Xoay vòng đa key & Tự động phục hồi)**:
+  - Cho phép Admin cấu hình danh sách nhiều API Key cho mỗi Provider (dán nhiều dòng từ các tài khoản độc lập).
+  - Phân bổ tải thông minh (Round-Robin) giữa các key còn khỏe mạnh.
+  - Hook sâu vào sự kiện `agent/request-error` của DSH: tự động phát hiện lỗi 429 (Rate Limit / Quota Exceeded), đưa key đó vào Cooldown 60 giây và xoay ngay sang key kế tiếp.
+  - Phát lệnh `{ kind: 'retry' }` tức thì cho agent loop của DSH $\rightarrow$ người dùng không bị báo lỗi đỏ hay ngắt quãng khi chat/vibe-coding.
+  - Tự động phục hồi trạng thái `active` cho key khi hết hạn phạt Cooldown.
+  - Giao diện trực quan trong Tab Admin: xem số key active/cooldown, tag trạng thái và nút *Đặt lại Cooldown*.
 
 ## 📦 Installation & Setup
 

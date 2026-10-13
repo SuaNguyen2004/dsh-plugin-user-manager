@@ -4,6 +4,7 @@ const testSuites = [
     "test/unit/test-auth.js",
     "test/unit/test-workspace.js",
     "test/unit/test-model-guard.js",
+    "test/unit/test-key-pool-rotation.js",
     "test/unit/test-native-approval.js",
     "test/unit/test-security-isolation.js",
     "test/unit/test-document-v2.js",
