@@ -143,6 +143,26 @@ console.log('✅ TEST 6.2: agent/request-error bắt trúng lỗi 429 và trả 
 keyPool.setKeys(testRef, []);
 keyPool.setKeys('GEMINI_API_KEY', []);
 
+console.log('\n--- TEST 7: Kiểm tra Xóa 1 Key đơn lẻ khỏi Pool (removeKeyByIndex) ---');
+const refDel = 'TEST_DEL_KEY';
+keyPool.setKeys(refDel, 'key-alpha\nkey-beta\nkey-gamma');
+let summaryDel = keyPool.getPoolSummary(refDel);
+assert.strictEqual(summaryDel.total, 3, 'Khởi tạo phải có 3 keys');
+
+// Xóa key thứ 2 (index 1: key-beta)
+keyPool.removeKeyByIndex(refDel, 1);
+summaryDel = keyPool.getPoolSummary(refDel);
+assert.strictEqual(summaryDel.total, 2, 'Sau khi xóa index 1, pool còn 2 keys');
+assert.strictEqual(keyPool.getActiveKey(refDel), 'key-alpha', 'Key alpha vẫn hoạt động');
+assert.strictEqual(keyPool.getActiveKey(refDel), 'key-gamma', 'Key gamma vẫn hoạt động');
+
+// Xóa nốt 2 key còn lại
+keyPool.removeKeyByIndex(refDel, 0);
+keyPool.removeKeyByIndex(refDel, 0);
+summaryDel = keyPool.getPoolSummary(refDel);
+assert.strictEqual(summaryDel.total, 0, 'Sau khi xóa hết, pool về 0');
+console.log('✅ TEST 7: Xóa từng API Key đơn lẻ khỏi Pool hoạt động chuẩn xác!');
+
 console.log('\n======================================================================');
 console.log('🎉 TẤT CẢ CÁC BÀI TEST KEY POOLING & AUTO-RECOVERY 429 ĐỀU PASS 100%! ');
 console.log('======================================================================\n');

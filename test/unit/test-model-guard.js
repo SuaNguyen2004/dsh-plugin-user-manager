@@ -232,6 +232,40 @@ async function runTests() {
     assert.strictEqual(deleteKeyReq.data.success, true);
     assert.strictEqual(mockStorage.has('GEMINI_API_KEY'), false);
 
+    // 2.9: Admin POST to /api/admin/models/remove-key (single key delete)
+    await request(port, 'POST', '/api/admin/models/key', {
+      ref: 'TEST_SINGLE_REF',
+      value: 'key1\nkey2\nkey3'
+    }, { 'Authorization': `Bearer ${adminToken}` });
+
+    const removeSingleReq = await request(port, 'POST', '/api/admin/models/remove-key', {
+      ref: 'TEST_SINGLE_REF',
+      index: 1
+    }, {
+      'Authorization': `Bearer ${adminToken}`
+    });
+    assert.strictEqual(removeSingleReq.status, 200, 'Remove single key must return 200');
+    assert.strictEqual(removeSingleReq.data.poolSummary.total, 2, 'Remaining keys must be 2');
+
+    // 2.10: Regular user POST to /api/admin/models/remove-key -> 403
+    const forbiddenRemove = await request(port, 'POST', '/api/admin/models/remove-key', {
+      ref: 'TEST_SINGLE_REF',
+      index: 0
+    }, {
+      'Authorization': `Bearer ${regularToken}`
+    });
+    assert.strictEqual(forbiddenRemove.status, 403, 'Regular user remove-key must return 403');
+
+    // 2.11: Admin POST to /api/admin/models/delete-provider -> 200
+    const delProviderReq = await request(port, 'POST', '/api/admin/models/delete-provider', {
+      providerId: 'test_fake_prov',
+      apiKeyEnv: 'TEST_SINGLE_REF'
+    }, {
+      'Authorization': `Bearer ${adminToken}`
+    });
+    assert.strictEqual(delProviderReq.status, 200, 'Delete provider by admin must return 200');
+    assert.strictEqual(delProviderReq.data.success, true);
+
     console.log('✅ TEST 2 PASSED: REST API enforces 401 for unauth, 403 for regular users, 200 with masked keys for Admin.');
   } finally {
     await webServer.close();
