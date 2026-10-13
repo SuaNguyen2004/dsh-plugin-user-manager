@@ -269,6 +269,19 @@ async function runTests() {
     console.log('✅ TEST 2 PASSED: REST API enforces 401 for unauth, 403 for regular users, 200 with masked keys for Admin.');
   } finally {
     await webServer.close();
+    try {
+      const db = (await import('../../lib/common/db.js')).getDb();
+      if (regularUser) {
+        db.prepare('DELETE FROM sessions WHERE user_id = ?').run(regularUser.id);
+        db.prepare('DELETE FROM users WHERE id = ?').run(regularUser.id);
+      }
+      const fsModule = await import('node:fs');
+      const pathModule = await import('node:path');
+      const wsDir = pathModule.join('workspaces', regularUsername);
+      if (fsModule.existsSync(wsDir)) {
+        fsModule.rmSync(wsDir, { recursive: true, force: true });
+      }
+    } catch (_) {}
   }
 
   console.log('--- TEST 3: UI Injection Verification for Model Management ---');

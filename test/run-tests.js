@@ -8,6 +8,7 @@ const testSuites = [
     "test/unit/test-native-approval.js",
     "test/unit/test-security-isolation.js",
     "test/unit/test-document-v2.js",
+    "test/unit/test-ui-syntax.js",
 ];
 
 console.log("====================================================");
