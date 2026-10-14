@@ -4,6 +4,18 @@ import path from 'node:path';
 import { keyPool } from '../../lib/admin/key-pool.js';
 import { setupModelCredentialsGuard, runWithAdminPrivileges, registerModelManagementRoutes, readProvidersFromPatch } from '../../lib/admin/model-guard.js';
 
+// Isolate test file so production data/key_pools.json is never mutated
+const TEST_POOLS_DIR = path.resolve(import.meta.dirname, '../../.tmp-test-suite');
+if (!fs.existsSync(TEST_POOLS_DIR)) {
+  fs.mkdirSync(TEST_POOLS_DIR, { recursive: true });
+}
+const TEST_POOLS_FILE = path.join(TEST_POOLS_DIR, 'test_key_pools.json');
+process.env.DSH_KEY_POOLS_FILE = TEST_POOLS_FILE;
+keyPool.customFilePath = TEST_POOLS_FILE;
+keyPool.pools.clear();
+keyPool.currentIndices.clear();
+keyPool.initialized = false;
+
 console.log('======================================================================');
 console.log('   KIỂM THỬ TÍNH NĂNG KEY POOLING & TỰ ĐỘNG PHỤC HỒI LỖI 429         ');
 console.log('======================================================================\n');
@@ -66,6 +78,14 @@ assert.strictEqual(summary3.active, 1);
 assert.strictEqual(summary3.cooldown, 2);
 console.log('✅ TEST 3.2: Key 2 dính 429, hệ thống tự chuyển sang Key 3!');
 
+// Key 3 hits 429 with failedKey = null (tests lastUsed resolution and all-exhausted returning null)
+assert.strictEqual(keyPool.getLastUsedKey(testRef), 'sk-account3-gamma-key-33333333');
+const rot3 = keyPool.markKey429(testRef, null, 60000);
+assert.strictEqual(rot3.rotated, false, 'Không còn key nào khả dụng thì rotated phải là false');
+assert.strictEqual(rot3.nextKey, null, 'nextKey phải là null khi toàn bộ pool bị cooldown');
+assert.strictEqual(keyPool.getActiveKey(testRef), null, 'getActiveKey phải trả về null khi toàn bộ pool cạn kiệt');
+console.log('✅ TEST 3.3: Tự động nhận diện key vừa dùng khi failedKey=null và trả về null khi cạn kiệt key!');
+
 // 4. Test Auto-Recovery when Cooldown expires
 console.log('\n--- TEST 4: Tự động phục hồi Key khi hết thời gian Cooldown ---');
 // Set a key with expired cooldown (simulate 1 second ago)
@@ -73,7 +93,9 @@ const entry = keyPool.pools.get(testRef).find(k => k.key === 'sk-account1-alpha-
 entry.cooldownUntil = Date.now() - 1000; // Expired 1 second ago!
 
 const summary4 = keyPool.getPoolSummary(testRef);
-assert.strictEqual(summary4.active, 2, 'Key 1 phải tự động hồi phục về active sau khi hết hạn cooldown');
+assert.strictEqual(summary4.active, 1, 'Key 1 phải tự động hồi phục về active sau khi hết hạn cooldown');
+assert.strictEqual(summary4.cooldown, 2, '2 key còn lại vẫn đang trong thời gian cooldown');
+assert.strictEqual(keyPool.getActiveKey(testRef), 'sk-account1-alpha-key-11111111', 'Key 1 đã hồi phục và sẵn sàng phục vụ');
 console.log('✅ TEST 4: Tự động hồi phục trạng thái Active khi hết thời gian phạt Cooldown!');
 
 // 5. Test Manual Reset Cooldown
