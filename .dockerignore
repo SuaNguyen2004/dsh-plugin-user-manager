@@ -1,0 +1,35 @@
+# Version control & internal logs
+.git
+.gitignore
+test-results/
+
+# Windows / Host dependencies & caches
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Production & host data stores (strictly excluded)
+data/
+workspaces/
+.dsh/
+.dsh-multiuser/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.yaml
+*.yml
+!cordis.patch.yml
+
+# Host-specific batch and profile files
+*.bat
+test/chrome-profile/
+
+# Temporary and test artifacts
+.tmp*
+test/.tmp*
+*.tmp
+

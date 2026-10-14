@@ -1,0 +1,4 @@
+services:
+    dsh-document-only:
+        environment:
+            - ENABLE_DSH_TEST_ENDPOINTS=true

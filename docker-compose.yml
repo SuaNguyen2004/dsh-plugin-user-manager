@@ -1,0 +1,28 @@
+services:
+    dsh-document-only:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        image: dsh-document-only:step3
+        container_name: dsh-document-only-test
+        user: "1000:1000"
+        restart: unless-stopped
+        security_opt:
+            - no-new-privileges:true
+        ports:
+            - "127.0.0.1:3090:3090"
+        environment:
+            - NODE_ENV=production
+            - DSH_HOME=/data/dsh_home
+            - USERS_DB_PATH=/data/db/users.db
+            - DSH_KEY_POOLS_FILE=/data/db/key_pools.json
+            - USERS_WORKSPACES_ROOT=/data/workspaces
+            - TEMP=/data/temp
+            - TMP=/data/temp
+            - PORT=3090
+            - ENABLE_DSH_TEST_ENDPOINTS=${ENABLE_DSH_TEST_ENDPOINTS:-false}
+        volumes:
+            - ./docker-test-data/db:/data/db
+            - ./docker-test-data/dsh_home:/data/dsh_home
+            - ./docker-test-data/workspaces:/data/workspaces
+            - ./docker-test-data/temp:/data/temp

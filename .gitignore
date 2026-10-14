@@ -10,5 +10,6 @@ workspaces/
 .tmp-test-suite/
 test/.tmp*
 /test/chrome-profile/
+docker-test-data/
 
 
