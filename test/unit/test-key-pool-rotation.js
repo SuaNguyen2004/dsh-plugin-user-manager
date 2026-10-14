@@ -4,13 +4,29 @@ import path from 'node:path';
 import { keyPool } from '../../lib/admin/key-pool.js';
 import { setupModelCredentialsGuard, runWithAdminPrivileges, registerModelManagementRoutes, readProvidersFromPatch } from '../../lib/admin/model-guard.js';
 
-// Isolate test file so production data/key_pools.json is never mutated
-const TEST_POOLS_DIR = path.resolve(import.meta.dirname, '../../.tmp-test-suite');
+// Isolate test file so production data/key_pools.json and .credentials.yaml are never mutated
+const TEST_POOLS_DIR = path.resolve(import.meta.dirname, '../../.tmp-test-suite/key-pool-test');
 if (!fs.existsSync(TEST_POOLS_DIR)) {
   fs.mkdirSync(TEST_POOLS_DIR, { recursive: true });
 }
 const TEST_POOLS_FILE = path.join(TEST_POOLS_DIR, 'test_key_pools.json');
+const TEST_DSH_HOME = path.join(TEST_POOLS_DIR, 'dsh_home');
 process.env.DSH_KEY_POOLS_FILE = TEST_POOLS_FILE;
+process.env.DSH_HOME = TEST_DSH_HOME;
+
+const testPatchDir = path.join(TEST_DSH_HOME, 'profiles', 'web');
+if (!fs.existsSync(testPatchDir)) {
+  fs.mkdirSync(testPatchDir, { recursive: true });
+}
+const realDshHome = path.join(process.env.USERPROFILE || 'C:\\Users\\Admin', '.dsh-multiuser');
+const realPatchFile = path.join(realDshHome, 'profiles', 'web', 'cordis.patch.yml');
+const srcPatchFile = path.resolve(import.meta.dirname, '../../cordis.patch.yml');
+if (fs.existsSync(realPatchFile)) {
+  fs.copyFileSync(realPatchFile, path.join(testPatchDir, 'cordis.patch.yml'));
+} else if (fs.existsSync(srcPatchFile)) {
+  fs.copyFileSync(srcPatchFile, path.join(testPatchDir, 'cordis.patch.yml'));
+}
+
 keyPool.customFilePath = TEST_POOLS_FILE;
 keyPool.pools.clear();
 keyPool.currentIndices.clear();
@@ -78,13 +94,18 @@ assert.strictEqual(summary3.active, 1);
 assert.strictEqual(summary3.cooldown, 2);
 console.log('✅ TEST 3.2: Key 2 dính 429, hệ thống tự chuyển sang Key 3!');
 
-// Key 3 hits 429 with failedKey = null (tests lastUsed resolution and all-exhausted returning null)
-assert.strictEqual(keyPool.getLastUsedKey(testRef), 'sk-account3-gamma-key-33333333');
-const rot3 = keyPool.markKey429(testRef, null, 60000);
+// Key 3: Test unknown failedKey does NOT guess or penalize innocent active keys
+const rotUnknown = keyPool.markKey429(testRef, null, 60000);
+assert.strictEqual(rotUnknown.skipped, true, 'Khi failedKey là null, phải bỏ qua cooldown để tránh phạt nhầm');
+assert.strictEqual(rotUnknown.rotated, false);
+assert.strictEqual(keyPool.getActiveKey(testRef), 'sk-account3-gamma-key-33333333', 'Key 3 vẫn phải active vì không bị phạt nhầm');
+
+// Now Key 3 specifically fails with 429
+const rot3 = keyPool.markKey429(testRef, 'sk-account3-gamma-key-33333333', 60000);
 assert.strictEqual(rot3.rotated, false, 'Không còn key nào khả dụng thì rotated phải là false');
 assert.strictEqual(rot3.nextKey, null, 'nextKey phải là null khi toàn bộ pool bị cooldown');
 assert.strictEqual(keyPool.getActiveKey(testRef), null, 'getActiveKey phải trả về null khi toàn bộ pool cạn kiệt');
-console.log('✅ TEST 3.3: Tự động nhận diện key vừa dùng khi failedKey=null và trả về null khi cạn kiệt key!');
+console.log('✅ TEST 3.3: An toàn tuyệt đối: không phạt nhầm khi failedKey=null, và trả về null khi cạn kiệt key!');
 
 // 4. Test Auto-Recovery when Cooldown expires
 console.log('\n--- TEST 4: Tự động phục hồi Key khi hết thời gian Cooldown ---');
@@ -138,12 +159,12 @@ console.log('✅ TEST 6.1: credentials.resolve() tự động cung cấp key t�
 // Verify agent/request-error catches 429 and returns { kind: 'retry' }
 assert(typeof eventHandler === 'function', 'Listener agent/request-error phải được đăng ký');
 
-// Mock failure payload with 429 Rate Limit
-// We use a mock patch provider mapping
+// Mock failure payload with explicit failed key (Point 2: direct identification)
 keyPool.setKeys('GEMINI_API_KEY', 'sk-gem-1111\nsk-gem-2222');
 
-const mockPayload = {
+const mockPayloadWithKey = {
   provider: 'google',
+  apiKey: 'sk-gem-1111',
   failure: {
     code: 'RATE_LIMIT',
     message: 'Resource has been exhausted (e.g. check quota) - 429',
@@ -152,18 +173,84 @@ const mockPayload = {
 };
 
 let downstreamCalled = false;
-const retryDecision = await eventHandler(mockPayload, () => {
+const retryDecision = await eventHandler(mockPayloadWithKey, () => {
   downstreamCalled = true;
   return Promise.resolve(undefined);
 });
 
 assert.strictEqual(retryDecision?.kind, 'retry', 'agent/request-error phải trả về { kind: "retry" } để DSH tự động thử lại ngay!');
 assert.strictEqual(downstreamCalled, false, 'Khi xoay key thành công, không để lỗi trôi xuống downstream!');
-console.log('✅ TEST 6.2: agent/request-error bắt trúng lỗi 429 và trả về { kind: "retry" } cho DSH agent loop!');
+console.log('✅ TEST 6.2: agent/request-error nhận diện chính xác failed key và trả về { kind: "retry" }!');
 
-// Clean up test key
+// Test 6.3 (Point 1): Hết key nhưng tuyệt đối không fallback về key cũ trong credentials.yaml
+const exhaustRef = 'TEST_EXHAUST_REF';
+keyPool.setKeys(exhaustRef, 'key-ex-1\nkey-ex-2');
+keyPool.markKey429(exhaustRef, 'key-ex-1', 60000);
+keyPool.markKey429(exhaustRef, 'key-ex-2', 60000);
+
+const resolvedExhausted = await mockCredentials.resolve(exhaustRef);
+assert.strictEqual(resolvedExhausted.value, null, 'Khi toàn bộ pool dính cooldown, credentials.resolve phải trả value=null');
+assert.strictEqual(resolvedExhausted.source, 'key-pool-exhausted', 'source phải là key-pool-exhausted, KHÔNG ĐƯỢC fallback về key cũ');
+console.log('✅ TEST 6.3: Phân biệt chính xác: pool hết key thì báo hết key/chờ cooldown, tuyệt đối không trả lại key đang cooldown!');
+
+// Test 6.4 (Point 1): Ref không có pool thì fallback bình thường về originalResolve
+const resolvedNoPool = await mockCredentials.resolve('NON_EXISTENT_REF');
+assert.strictEqual(resolvedNoPool.value, 'original-resolve-key', 'Ref không có pool thì fallback về originalResolve');
+console.log('✅ TEST 6.4: Ref không quản lý qua pool thì fallback về originalResolve chính xác!');
+
+// Test 6.5 (Point 2): Gắn key theo Request ID và chặn đứng phạt nhầm giữa các request song song
+const parallelRef = 'GEMINI_API_KEY';
+keyPool.setKeys(parallelRef, 'parallel-key-alpha\nparallel-key-beta');
+
+// Request 1 and Request 2 start concurrently
+const resReq1 = await mockCredentials.resolve(parallelRef, { requestId: 'req-concurrent-1' });
+assert.strictEqual(resReq1.value, 'parallel-key-alpha', 'Request 1 nhận parallel-key-alpha');
+
+const resReq2 = await mockCredentials.resolve(parallelRef, { requestId: 'req-concurrent-2' });
+assert.strictEqual(resReq2.value, 'parallel-key-beta', 'Request 2 nhận parallel-key-beta');
+
+// Request 1 fails with 429
+const req1ErrorPayload = {
+  provider: 'google',
+  requestId: 'req-concurrent-1',
+  failure: {
+    code: 'RATE_LIMIT',
+    message: 'Quota exceeded 429',
+    providerRetryAfterMs: 60000
+  }
+};
+const req1Decision = await eventHandler(req1ErrorPayload, () => Promise.resolve());
+assert.strictEqual(req1Decision?.kind, 'retry', 'Request 1 được retry với key kế tiếp');
+
+// Verify parallel-key-alpha is in cooldown, while parallel-key-beta is STILL ACTIVE!
+const geminiSummary = keyPool.getPoolSummary(parallelRef);
+assert.strictEqual(geminiSummary.cooldown, 1, 'Chỉ key của Request 1 bị cooldown');
+assert.strictEqual(geminiSummary.active, 1, 'Key của Request 2 vẫn hoàn toàn active!');
+assert.strictEqual(keyPool.getActiveKey(parallelRef), 'parallel-key-beta', 'parallel-key-beta sẵn sàng phục vụ tiếp');
+console.log('✅ TEST 6.5: Gắn key theo Request ID: Request 1 lỗi chỉ phạt key 1, key 2 của Request 2 chạy song song không bị phạt nhầm!');
+
+// Test 6.6 (Point 2): Khi runtime không cung cấp thông tin key lỗi, bỏ qua cooldown để tránh phạt nhầm
+let unknownDownstream = false;
+const unknownErrorPayload = {
+  provider: 'google',
+  // No apiKey, no requestId
+  failure: {
+    code: 'RATE_LIMIT',
+    message: 'Anonymous request 429'
+  }
+};
+const unknownDecision = await eventHandler(unknownErrorPayload, () => {
+  unknownDownstream = true;
+  return Promise.resolve(undefined);
+});
+assert.strictEqual(unknownDownstream, true, 'Khi không rõ key nào bị lỗi, phải chuyển tiếp downstream thay vì phạt nhầm');
+assert.strictEqual(geminiSummary.cooldown, 1, 'Không có thêm key nào bị cooldown oan');
+console.log('✅ TEST 6.6: An toàn tuyệt đối: không đoán mò hoặc phạt nhầm key khi runtime không cung cấp thông tin request lỗi!');
+
+// Clean up test keys
 keyPool.setKeys(testRef, []);
 keyPool.setKeys('GEMINI_API_KEY', []);
+keyPool.setKeys(exhaustRef, []);
 
 console.log('\n--- TEST 7: Kiểm tra Xóa 1 Key đơn lẻ khỏi Pool (removeKeyByIndex) ---');
 const refDel = 'TEST_DEL_KEY';

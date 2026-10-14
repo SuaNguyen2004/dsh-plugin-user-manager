@@ -1,10 +1,46 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import http from 'node:http';
 import assert from 'node:assert';
+import { keyPool } from '../../lib/admin/key-pool.js';
 import { setupModelCredentialsGuard, runWithAdminPrivileges, registerModelManagementRoutes, readProvidersFromPatch } from '../../lib/admin/model-guard.js';
 import { getNativeInjectionMarkup } from '../../lib/ui/ui-injection.js';
-import { initDatabase, createUser, approveUser, findUserByUsername } from '../../lib/common/db.js';
+import { initDatabase, closeDatabase, createUser, approveUser, findUserByUsername } from '../../lib/common/db.js';
 import { createSession } from '../../lib/common/db.js';
 import { registerAuthRoutes } from '../../lib/common/auth.js';
+
+// Setup isolated environment for model-guard test so production DB, YAML, and pools are never touched
+const TEST_ROOT = path.resolve(import.meta.dirname, '../../.tmp-test-suite/model-guard-test');
+if (!fs.existsSync(TEST_ROOT)) {
+  fs.mkdirSync(TEST_ROOT, { recursive: true });
+}
+const TEST_DB_PATH = path.join(TEST_ROOT, 'test_users.db');
+const TEST_POOLS_PATH = path.join(TEST_ROOT, 'test_key_pools.json');
+const TEST_DSH_HOME = path.join(TEST_ROOT, 'dsh_home');
+
+process.env.USERS_DB_PATH = TEST_DB_PATH;
+process.env.DSH_HOME = TEST_DSH_HOME;
+process.env.DSH_KEY_POOLS_FILE = TEST_POOLS_PATH;
+
+// Setup test patch file in TEST_DSH_HOME
+const testPatchDir = path.join(TEST_DSH_HOME, 'profiles', 'web');
+if (!fs.existsSync(testPatchDir)) {
+  fs.mkdirSync(testPatchDir, { recursive: true });
+}
+const realDshHome = path.join(process.env.USERPROFILE || 'C:\\Users\\Admin', '.dsh-multiuser');
+const realPatchFile = path.join(realDshHome, 'profiles', 'web', 'cordis.patch.yml');
+const srcPatchFile = path.resolve(import.meta.dirname, '../../cordis.patch.yml');
+if (fs.existsSync(realPatchFile)) {
+  fs.copyFileSync(realPatchFile, path.join(testPatchDir, 'cordis.patch.yml'));
+} else if (fs.existsSync(srcPatchFile)) {
+  fs.copyFileSync(srcPatchFile, path.join(testPatchDir, 'cordis.patch.yml'));
+}
+
+// Reset keyPool to test file
+keyPool.customFilePath = TEST_POOLS_PATH;
+keyPool.pools.clear();
+keyPool.currentIndices.clear();
+keyPool.initialized = false;
 
 class MockWebServer {
   constructor() {
@@ -131,7 +167,7 @@ async function runTests() {
   console.log('✅ TEST 1 PASSED: Model & Credentials Guard blocks direct non-admin alterations and permits admin.');
 
   console.log('--- TEST 2: REST API Authentication & Role Authorization ---');
-  await initDatabase();
+  await initDatabase(TEST_DB_PATH);
 
   // Create a regular test user and an admin user
   const regularUsername = 'user_model_test_' + Date.now();
@@ -297,6 +333,7 @@ async function runTests() {
       if (fsModule.existsSync(wsDir)) {
         fsModule.rmSync(wsDir, { recursive: true, force: true });
       }
+      closeDatabase();
     } catch (_) {}
   }
 
