@@ -312,10 +312,67 @@ assert.strictEqual(sessionDownstream, true, 'Chỉ có sessionId thì bắt bu�
 assert.strictEqual(keyB.status, 'active', 'Key B vẫn an toàn ở trạng thái active');
 console.log('✅ TEST 6.8: Bỏ fallback sessionId: Chỉ có sessionId thì bỏ qua cooldown, loại trừ 100% nguy cơ phạt nhầm!');
 
+// Test 6.9: Attempt không tồn tại -> bắt buộc trả null, tuyệt đối không fallback attempt 0
+console.log('\n--- TEST 6.9: Attempt không tồn tại -> trả null, không fallback attempt 0 ---');
+const testReqId1 = 'req-attempt-check-1';
+keyPool.trackAttemptKey({ requestId: testReqId1, attemptId: 0, ref: 'TEST_REF_A' }, 'key-att-0');
+keyPool.trackAttemptKey({ requestId: testReqId1, attemptId: 1, ref: 'TEST_REF_A' }, 'key-att-1');
+
+// Tra cứu attempt 2 (chưa từng được đăng ký)
+const missingAttResult = keyPool.getAttemptKey({ requestId: testReqId1, attemptId: 2, ref: 'TEST_REF_A' });
+assert.strictEqual(missingAttResult, null, 'Attempt 2 chưa đăng ký bắt buộc phải trả null, không được fallback về attempt 0!');
+console.log('✅ TEST 6.9: Attempt không tồn tại trả null chính xác, không fallback về attempt 0!');
+
+// Test 6.10: Ref không khớp -> bắt buộc trả null, tuyệt đối không fallback bỏ ref
+console.log('\n--- TEST 6.10: Ref không khớp -> trả null, không fallback bỏ ref ---');
+const testReqId2 = 'req-ref-check-2';
+keyPool.trackAttemptKey({ requestId: testReqId2, attemptId: 1, ref: 'REF_VALID_Y' }, 'key-for-ref-y');
+
+// Tra cứu ref REF_INVALID_Z
+const mismatchRefResult = keyPool.getAttemptKey({ requestId: testReqId2, attemptId: 1, ref: 'REF_INVALID_Z' });
+assert.strictEqual(mismatchRefResult, null, 'Ref không khớp bắt buộc phải trả null, không được fallback lấy key của ref khác!');
+console.log('✅ TEST 6.10: Ref không khớp trả null chính xác, không fallback lấy key của ref khác!');
+
+// Test 6.11: Lỗi thiếu attempt sau nhiều lần retry -> bắt buộc trả null và bỏ qua cooldown
+console.log('\n--- TEST 6.11: Thiếu attemptId sau nhiều lần retry -> trả null và bỏ qua cooldown ---');
+const retryReqId = 'req-multi-retry-3';
+const retryRef = 'GEMINI_API_KEY';
+keyPool.setKeys(retryRef, 'key-retry-111\nkey-retry-222');
+
+// Đăng ký 2 attempt liên tiếp cho cùng 1 requestId
+keyPool.trackAttemptKey({ requestId: retryReqId, attemptId: 1, ref: retryRef }, 'key-retry-111');
+keyPool.trackAttemptKey({ requestId: retryReqId, attemptId: 2, ref: retryRef }, 'key-retry-222');
+
+// Lỗi 429 đến nhưng KHÔNG CÓ attemptId (chỉ có requestId và provider)
+const missingAttemptPayload = {
+  provider: 'google',
+  requestId: retryReqId,
+  // attemptId is missing / undefined
+  failure: {
+    code: 'RATE_LIMIT',
+    message: 'Ambiguous retry attempt 429'
+  }
+};
+
+let retryDownstreamCalled = false;
+await eventHandler(missingAttemptPayload, () => {
+  retryDownstreamCalled = true;
+  return Promise.resolve(undefined);
+});
+
+assert.strictEqual(retryDownstreamCalled, true, 'Khi thiếu attemptId sau nhiều lần retry, phải chuyển tiếp downstream');
+const poolCheck = keyPool.pools.get(retryRef);
+const k1 = poolCheck.find(k => k.key === 'key-retry-111');
+const k2 = poolCheck.find(k => k.key === 'key-retry-222');
+assert.strictEqual(k1.status, 'active', 'Key retry 1 không bị phạt nhầm');
+assert.strictEqual(k2.status, 'active', 'Key retry 2 không bị phạt nhầm');
+console.log('✅ TEST 6.11: Thiếu attemptId sau nhiều lần retry bỏ qua cooldown thành công, không phạt nhầm bất kỳ key nào!');
+
 // Clean up test keys
 keyPool.setKeys(testRef, []);
 keyPool.setKeys('GEMINI_API_KEY', []);
 keyPool.setKeys(exhaustRef, []);
+keyPool.setKeys(retrySessionRef, []);
 
 console.log('\n--- TEST 7: Kiểm tra Xóa 1 Key đơn lẻ khỏi Pool (removeKeyByIndex) ---');
 const refDel = 'TEST_DEL_KEY';
