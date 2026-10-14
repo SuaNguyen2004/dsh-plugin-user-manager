@@ -28,8 +28,17 @@ workspaces/
 *.bat
 test/chrome-profile/
 
+# Test data directories
+docker-test-data/
+docker-test-data*
+
+# Environment and secrets
+.env
+.env.*
+*.secret*
+secrets/
+
 # Temporary and test artifacts
 .tmp*
 test/.tmp*
 *.tmp
-

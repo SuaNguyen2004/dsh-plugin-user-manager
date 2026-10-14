@@ -1,5 +1,5 @@
-# Base image: Official Node 22 LTS (Bookworm slim)
-FROM node:22-bookworm-slim
+# Base image: Official Node 22 LTS (Bookworm slim) pinned by digest
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
 
 # Labels
 LABEL maintainer="dsh-plugin-user-manager"
@@ -50,6 +50,7 @@ RUN mkdir -p /data/dsh_home /data/db /data/workspaces /data/temp \
 ENV NODE_ENV=production \
     NODE_PATH=/usr/local/lib/node_modules:/app/node_modules \
     NODE_OPTIONS="--require /app/patch-chmod.cjs" \
+    ENABLE_DOCKER_CHMOD_WORKAROUND=true \
     DSH_HOME=/data/dsh_home \
     USERS_DB_PATH=/data/db/users.db \
     DSH_KEY_POOLS_FILE=/data/db/key_pools.json \
