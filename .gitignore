@@ -8,7 +8,7 @@ data/*.sqlite*
 data/*.json
 workspaces/
 .tmp-test-suite/
-test/.tmp-test-suite/
+test/.tmp*
 /test/chrome-profile/
 
 
