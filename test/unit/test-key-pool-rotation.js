@@ -247,6 +247,71 @@ assert.strictEqual(unknownDownstream, true, 'Khi không rõ key nào bị lỗi,
 assert.strictEqual(geminiSummary.cooldown, 1, 'Không có thêm key nào bị cooldown oan');
 console.log('✅ TEST 6.6: An toàn tuyệt đối: không đoán mò hoặc phạt nhầm key khi runtime không cung cấp thông tin request lỗi!');
 
+// Test 6.7: Hai attempt trong cùng một session, phản hồi lỗi đến không đúng thứ tự (Out-of-order)
+console.log('\n--- TEST 6.7: Hai Attempt cùng session, phản hồi lỗi đến không đúng thứ tự ---');
+const retrySessionRef = 'GEMINI_API_KEY';
+keyPool.setKeys(retrySessionRef, 'key-attempt-alpha\nkey-attempt-beta');
+
+const sharedSessionId = 'session-chat-concurrency-999';
+
+// Attempt 1 được khởi tạo và nhận key-attempt-alpha
+const resAtt1 = await mockCredentials.resolve(retrySessionRef, {
+  sessionId: sharedSessionId,
+  requestId: 'req-chain-1',
+  attemptId: 1
+});
+assert.strictEqual(resAtt1.value, 'key-attempt-alpha', 'Attempt 1 phải nhận key-attempt-alpha');
+
+// Attempt 2 (lần retry hoặc request kế tiếp trong cùng session) được khởi tạo và nhận key-attempt-beta
+const resAtt2 = await mockCredentials.resolve(retrySessionRef, {
+  sessionId: sharedSessionId,
+  requestId: 'req-chain-1',
+  attemptId: 2
+});
+assert.strictEqual(resAtt2.value, 'key-attempt-beta', 'Attempt 2 phải nhận key-attempt-beta');
+
+// Bây giờ lỗi 429 của Attempt 1 mới trả về (đến sau Attempt 2)
+const att1ErrorPayload = {
+  provider: 'google',
+  sessionId: sharedSessionId, // cùng session
+  requestId: 'req-chain-1',
+  attemptId: 1, // đích danh attempt 1
+  failure: {
+    code: 'RATE_LIMIT',
+    message: 'Attempt 1 hit 429 quota limit'
+  }
+};
+const att1Decision = await eventHandler(att1ErrorPayload, () => Promise.resolve());
+assert.strictEqual(att1Decision?.kind, 'retry', 'Xử lý xoay key thành công');
+
+// Kiểm tra: Key A (của attempt 1) bị cooldown, còn Key B (của attempt 2) TUYỆT ĐỐI KHÔNG BỊ PHẠT!
+const poolAfterAtt1 = keyPool.pools.get(retrySessionRef);
+const keyA = poolAfterAtt1.find(k => k.key === 'key-attempt-alpha');
+const keyB = poolAfterAtt1.find(k => k.key === 'key-attempt-beta');
+
+assert.strictEqual(keyA.status, 'cooldown', 'Key A của attempt 1 phải bị cooldown');
+assert.strictEqual(keyB.status, 'active', 'Key B của attempt 2 cùng session TUYỆT ĐỐI KHÔNG BỊ PHẠT!');
+console.log('✅ TEST 6.7: Hai attempt cùng session, phản hồi lỗi đến lệch thứ tự: Phạt đúng key của attempt lỗi, không ghi đè hay phạt nhầm!');
+
+// Test 6.8: Bỏ qua hoàn toàn sessionId nếu không có requestId / attemptId đáng tin cậy
+console.log('\n--- TEST 6.8: Bỏ qua sessionId nếu không có requestId/attemptId đáng tin cậy ---');
+let sessionDownstream = false;
+const sessionOnlyErrorPayload = {
+  provider: 'google',
+  sessionId: sharedSessionId, // CHỈ CÓ sessionId, không có requestId / attemptId / apiKey
+  failure: {
+    code: 'RATE_LIMIT',
+    message: 'Generic session 429'
+  }
+};
+await eventHandler(sessionOnlyErrorPayload, () => {
+  sessionDownstream = true;
+  return Promise.resolve(undefined);
+});
+assert.strictEqual(sessionDownstream, true, 'Chỉ có sessionId thì bắt buộc phải chuyển tiếp downstream, không được đoán phạt');
+assert.strictEqual(keyB.status, 'active', 'Key B vẫn an toàn ở trạng thái active');
+console.log('✅ TEST 6.8: Bỏ fallback sessionId: Chỉ có sessionId thì bỏ qua cooldown, loại trừ 100% nguy cơ phạt nhầm!');
+
 // Clean up test keys
 keyPool.setKeys(testRef, []);
 keyPool.setKeys('GEMINI_API_KEY', []);
