@@ -163,6 +163,26 @@ summaryDel = keyPool.getPoolSummary(refDel);
 assert.strictEqual(summaryDel.total, 0, 'Sau khi xóa hết, pool về 0');
 console.log('✅ TEST 7: Xóa từng API Key đơn lẻ khỏi Pool hoạt động chuẩn xác!');
 
+console.log('\n--- TEST 8: Kiểm tra Thêm nối tiếp API Key (addKeys) và chống trùng lặp ---');
+const refAppend = 'TEST_APPEND_KEY';
+keyPool.setKeys(refAppend, ['key-one']);
+assert.strictEqual(keyPool.getPoolSummary(refAppend).total, 1, 'Ban đầu có 1 key');
+
+// Thêm key mới bằng addKeys
+const resAdd = keyPool.addKeys(refAppend, 'key-two\nkey-three');
+assert.strictEqual(resAdd.length, 3, 'Sau khi addKeys phải có tổng cộng 3 keys');
+assert.strictEqual(resAdd.addedCount, 2, 'Số lượng key mới thêm vào là 2');
+assert.strictEqual(keyPool.getPoolSummary(refAppend).total, 3, 'Summary phản ánh đúng 3 keys');
+
+// Thêm key trùng lặp
+const resDup = keyPool.addKeys(refAppend, 'key-two\nkey-four');
+assert.strictEqual(resDup.length, 4, 'Sau khi thêm chỉ tăng thêm 1 key (key-four), key-two bị bỏ qua vì đã có');
+assert.strictEqual(resDup.addedCount, 1, 'Số lượng key mới thực sự thêm vào là 1');
+
+// Dọn dẹp
+keyPool.setKeys(refAppend, []);
+console.log('✅ TEST 8: Thêm nối tiếp API Key (addKeys) và chống trùng lặp hoạt động chuẩn xác!');
+
 console.log('\n======================================================================');
 console.log('🎉 TẤT CẢ CÁC BÀI TEST KEY POOLING & AUTO-RECOVERY 429 ĐỀU PASS 100%! ');
 console.log('======================================================================\n');

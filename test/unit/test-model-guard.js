@@ -266,6 +266,22 @@ async function runTests() {
     assert.strictEqual(delProviderReq.status, 200, 'Delete provider by admin must return 200');
     assert.strictEqual(delProviderReq.data.success, true);
 
+    // 2.12: Admin POST to /api/admin/models/key with mode: 'append'
+    const appendKeyReq = await request(port, 'POST', '/api/admin/models/key', {
+      ref: 'TEST_APPEND_ENDPOINT_REF',
+      value: 'seed_key1'
+    }, { 'Authorization': `Bearer ${adminToken}` });
+    assert.strictEqual(appendKeyReq.status, 200);
+    assert.strictEqual(appendKeyReq.data.poolSummary.total, 1);
+
+    const appendMoreReq = await request(port, 'POST', '/api/admin/models/key', {
+      ref: 'TEST_APPEND_ENDPOINT_REF',
+      value: 'seed_key2\nseed_key3',
+      mode: 'append'
+    }, { 'Authorization': `Bearer ${adminToken}` });
+    assert.strictEqual(appendMoreReq.status, 200);
+    assert.strictEqual(appendMoreReq.data.poolSummary.total, 3, 'Must append without overwriting previous keys');
+
     console.log('✅ TEST 2 PASSED: REST API enforces 401 for unauth, 403 for regular users, 200 with masked keys for Admin.');
   } finally {
     await webServer.close();
