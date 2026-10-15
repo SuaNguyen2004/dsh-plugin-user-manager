@@ -31,6 +31,10 @@ test/chrome-profile/
 # Test data directories
 docker-test-data/
 docker-test-data*
+test-cloned-migration-data/
+test-cloned-migration-data*
+backup*/
+backup*
 
 # Environment and secrets
 .env
