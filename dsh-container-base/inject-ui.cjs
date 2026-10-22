@@ -190,14 +190,25 @@ try {
     box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
   }
   .dsh-btn-change-pwd {
-    background: #238636;
-    color: #ffffff;
-    border-color: rgba(240, 246, 252, 0.1);
-    width: 100%;
-    margin-top: 12px;
+    background: #238636 !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(240, 246, 252, 0.2) !important;
+    width: 100% !important;
+    margin-top: 14px !important;
+    padding: 9px 14px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    visibility: visible !important;
+    opacity: 1 !important;
   }
   .dsh-btn-change-pwd:hover {
-    background: #2ea043;
+    background: #2ea043 !important;
   }
 
   .dsh-modal-actions {
@@ -217,27 +228,6 @@ try {
     background: rgba(218, 54, 51, 0.15); color: #f85149; border-color: rgba(218, 54, 51, 0.4);
   }
   .dsh-btn-logout:hover { background: #da3633; color: #fff; }
-
-  /* Read-Only Mode Banner */
-  #dsh-ro-banner {
-    display: none;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    background: rgba(210, 153, 34, 0.16);
-    border: 1px solid rgba(210, 153, 34, 0.45);
-    border-radius: 8px;
-    padding: 8px 16px;
-    margin: 8px auto;
-    width: fit-content;
-    max-width: 90%;
-    color: #e3b341;
-    font-size: 13px;
-    font-weight: 600;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    user-select: none;
-    z-index: 9999;
-  }
 
   ${!isAdmin ? `
   [data-key="models"],
@@ -438,160 +428,6 @@ try {
     } catch (e) {}
     window.location.href = '/login';
   }
-
-  ${isAdmin ? `
-  // READ-ONLY GUARD FOR ADMIN VIEWING OTHER USER WORKSPACES
-  (function initAdminReadOnlyMonitor() {
-    let isRoMode = false;
-    let cachedPlaceholder = null;
-
-    function ensureRoBanner() {
-      let banner = document.getElementById('dsh-ro-banner');
-      if (!banner) {
-        banner = document.createElement('div');
-        banner.id = 'dsh-ro-banner';
-        banner.innerHTML = '⚠️ <strong>Chế độ Read-Only:</strong> Bạn đang xem phiên làm việc của User khác (Vô hiệu hóa gửi tin nhắn)';
-        document.body.appendChild(banner);
-      }
-      return banner;
-    }
-
-    function detectRoWorkspace() {
-      // 1. Check document title
-      if (document.title && document.title.includes('[View]')) return true;
-
-      // 2. Check URL / Hash / Path
-      const decodedUrl = decodeURIComponent(window.location.href);
-      if (decodedUrl.includes('[View]')) return true;
-
-      // 3. Check active items in sidebar / tree
-      const activeCandidates = document.querySelectorAll(
-        '[class*="active"], [class*="selected"], [aria-selected="true"], [data-active="true"], [role="treeitem"][aria-selected="true"]'
-      );
-      for (const el of activeCandidates) {
-        if (el.textContent && el.textContent.includes('[View]')) return true;
-      }
-
-      // 4. Check headers / breadcrumbs
-      const headers = document.querySelectorAll('header, [class*="header"], [class*="title"], [class*="breadcrumb"]');
-      for (const el of headers) {
-        if (el.children.length < 5 && el.textContent && el.textContent.includes('[View]')) {
-          return true;
-        }
-      }
-
-      return false;
-    }
-
-    function applyRoState(enable) {
-      const banner = ensureRoBanner();
-      const textareas = document.querySelectorAll('textarea');
-      const sendButtons = document.querySelectorAll('button[aria-label*="send" i], button[aria-label*="submit" i], button[type="submit"]');
-
-      if (enable) {
-        banner.style.display = 'flex';
-
-        // Position banner nicely above or near the composer
-        const mainTextarea = textareas[0];
-        if (mainTextarea) {
-          const parent = mainTextarea.closest('form') || mainTextarea.parentElement;
-          if (parent && banner.parentElement !== parent && parent.parentElement) {
-            parent.parentElement.insertBefore(banner, parent);
-          }
-        }
-
-        textareas.forEach(ta => {
-          if (!cachedPlaceholder && ta.placeholder) {
-            cachedPlaceholder = ta.placeholder;
-          }
-          ta.disabled = true;
-          ta.setAttribute('readonly', 'true');
-          ta.placeholder = 'Chế độ Read-Only: Bạn đang xem phiên làm việc của User khác';
-          ta.style.opacity = '0.45';
-          ta.style.cursor = 'not-allowed';
-          ta.style.backgroundColor = '#161b22';
-        });
-
-        sendButtons.forEach(btn => {
-          btn.style.display = 'none';
-          btn.disabled = true;
-          btn.style.pointerEvents = 'none';
-        });
-      } else {
-        banner.style.display = 'none';
-
-        textareas.forEach(ta => {
-          ta.disabled = false;
-          ta.removeAttribute('readonly');
-          if (cachedPlaceholder) {
-            ta.placeholder = cachedPlaceholder;
-          }
-          ta.style.opacity = '1';
-          ta.style.cursor = 'auto';
-          ta.style.backgroundColor = '';
-        });
-
-        sendButtons.forEach(btn => {
-          btn.style.display = '';
-          btn.disabled = false;
-          btn.style.pointerEvents = 'auto';
-        });
-      }
-    }
-
-    // Intercept clicks on [View] items or switching workspaces
-    document.addEventListener('click', function(e) {
-      const target = e.target;
-      if (!target) return;
-      const closest = target.closest('div, a, button, li, span');
-      if (closest && closest.textContent) {
-        if (closest.textContent.includes('[View]')) {
-          isRoMode = true;
-          applyRoState(true);
-          return;
-        } else if (
-          closest.textContent.includes('Workspace') ||
-          closest.getAttribute('role') === 'treeitem' ||
-          closest.getAttribute('role') === 'tab' ||
-          closest.classList.contains('tab-btn')
-        ) {
-          setTimeout(() => {
-            isRoMode = detectRoWorkspace();
-            applyRoState(isRoMode);
-          }, 150);
-        }
-      }
-    }, true);
-
-    // Prevent submitting via Enter in RO mode
-    document.addEventListener('keydown', function(e) {
-      if (isRoMode && (e.key === 'Enter' || e.keyCode === 13)) {
-        const active = document.activeElement;
-        if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-      }
-    }, true);
-
-    // Periodic check to keep UI in sync
-    setInterval(() => {
-      const active = detectRoWorkspace();
-      if (active !== isRoMode) {
-        isRoMode = active;
-        applyRoState(isRoMode);
-      } else if (isRoMode) {
-        applyRoState(true);
-      }
-    }, 400);
-
-    setTimeout(() => {
-      isRoMode = detectRoWorkspace();
-      if (isRoMode) applyRoState(true);
-    }, 600);
-  })();
-  ` : ''}
 
   ${!isAdmin ? `
   (function monitorAndHideModelsTab() {

@@ -25,14 +25,39 @@ function findUserHomeDir(friendly, dirname) {
   return null;
 }
 
+export function projectKey(cwd) {
+  if (!cwd || cwd.length === 0) return '--root--';
+  let readable = '';
+  let separatorRun = false;
+  for (let i = 0; i < cwd.length; i++) {
+    const code = cwd.charCodeAt(i);
+    const ch = String.fromCharCode(code);
+    if (ch === '/' || ch === '\\' || ch === ':') {
+      if (!separatorRun) readable += '-';
+      separatorRun = true;
+    } else if (ch !== '~' && /^[A-Za-z0-9._-]$/.test(ch)) {
+      readable += ch;
+      separatorRun = false;
+    } else {
+      readable += '~' + code.toString(16).toUpperCase().padStart(4, '0');
+      separatorRun = false;
+    }
+  }
+  return '--' + (readable.replace(/^-+/, '') || 'root').slice(0, 251) + '--';
+}
+
 function registerRoWorkspaces(wsData, username) {
   const roDir = '/data/all_users_ro';
   if (!fs.existsSync(roDir)) return;
 
   const dshHome = process.env.DSH_HOME || '/data/dsh_home';
   const adminSessionsDir = path.join(dshHome, 'storages', 'session_projcache', 'sessions');
+  const defaultSessionsDir = path.join(dshHome, 'sessions', '--data-workspace--');
   if (!fs.existsSync(adminSessionsDir)) {
     try { fs.mkdirSync(adminSessionsDir, { recursive: true }); } catch {}
+  }
+  if (!fs.existsSync(defaultSessionsDir)) {
+    try { fs.mkdirSync(defaultSessionsDir, { recursive: true }); } catch {}
   }
 
   try {
@@ -53,6 +78,11 @@ function registerRoWorkspaces(wsData, username) {
       const friendly = dirname.replace(/^[0-9]+_/, '');
       const roWsId = `ro-workspace-${friendly}`;
       const roPath = `/data/workspace/[View] ${friendly}`;
+      const roProjKey = projectKey(roPath);
+      const roSessionsDir = path.join(dshHome, 'sessions', roProjKey);
+      if (!fs.existsSync(roSessionsDir)) {
+        try { fs.mkdirSync(roSessionsDir, { recursive: true }); } catch {}
+      }
 
       // 1. Discover sessions from user's dsh_home
       const userSessionIds = [];
@@ -75,7 +105,7 @@ function registerRoWorkspaces(wsData, username) {
           } catch {}
         }
 
-        // Link user's session files into Admin's session_projcache
+        // Link and patch user's session files into Admin's session_projcache
         const uSessionsDir = path.join(userHomeDir, 'storages', 'session_projcache', 'sessions');
         if (fs.existsSync(uSessionsDir)) {
           try {
@@ -83,12 +113,55 @@ function registerRoWorkspaces(wsData, username) {
             for (const sf of sFiles) {
               if (!sf.endsWith('.json')) continue;
               const sourceFile = path.join(uSessionsDir, sf);
-              const targetSymlink = path.join(adminSessionsDir, sf);
-              if (!fs.existsSync(targetSymlink)) {
-                try { fs.symlinkSync(sourceFile, targetSymlink); } catch {}
-              }
+              const targetJson = path.join(adminSessionsDir, sf);
               const sid = sf.replace('.json', '');
+
+              try {
+                // Copy and associate session's cwd to Admin's [View] workspace path
+                const orig = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
+                if (orig && orig.record && orig.record.identity) {
+                  orig.record.identity.cwd = roPath;
+                }
+                if (fs.existsSync(targetJson)) {
+                  try { fs.unlinkSync(targetJson); } catch {}
+                }
+                fs.writeFileSync(targetJson, JSON.stringify(orig, null, 2), 'utf8');
+              } catch {
+                if (!fs.existsSync(targetJson)) {
+                  try { fs.symlinkSync(sourceFile, targetJson); } catch {}
+                }
+              }
+
               if (!userSessionIds.includes(sid)) userSessionIds.push(sid);
+
+              // 2. Discover physical session directories and link into Admin's sessions/
+              const possibleSessionDirs = [
+                path.join(userHomeDir, 'sessions', '--data-workspace--', sid),
+                path.join(userHomeDir, 'sessions', projectKey('/data/workspace'), sid)
+              ];
+              for (const pDir of possibleSessionDirs) {
+                if (fs.existsSync(pDir)) {
+                  const targetSubDirs = [
+                    path.join(roSessionsDir, sid),
+                    path.join(defaultSessionsDir, sid)
+                  ];
+                  for (const tSub of targetSubDirs) {
+                    if (!fs.existsSync(tSub)) {
+                      try { fs.mkdirSync(tSub, { recursive: true }); } catch {}
+                    }
+                    try {
+                      for (const f of fs.readdirSync(pDir)) {
+                        const sFile = path.join(pDir, f);
+                        const dFile = path.join(tSub, f);
+                        if (!fs.existsSync(dFile)) {
+                          try { fs.symlinkSync(sFile, dFile); } catch {}
+                        }
+                      }
+                    } catch {}
+                  }
+                  break;
+                }
+              }
             }
           } catch {}
         }
