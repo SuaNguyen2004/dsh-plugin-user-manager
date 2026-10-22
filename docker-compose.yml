@@ -1,28 +1,70 @@
+# docker-compose.yml
+# DeepSeek Harness Multi-tenant Enterprise SaaS Stack
+
+name: dsh-enterprise
+
 services:
-    dsh-document-only:
+    # 1. Cơ sở dữ liệu tập trung PostgreSQL
+    postgres:
+        image: postgres:18-alpine
+        container_name: dsh-enterprise-postgres
+        restart: unless-stopped
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-dsh_admin}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dsh_secure_password_2026}
+            POSTGRES_DB: ${POSTGRES_DB:-dsh_enterprise_db}
+        ports:
+            - "5432:5432"
+        volumes:
+            - postgres_data:/var/lib/postgresql
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U dsh_admin -d dsh_enterprise_db"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    # 2. Master Backend Gateway & Docker Orchestrator
+    master-backend:
         build:
             context: .
-            dockerfile: Dockerfile
-        image: dsh-document-only:step3
-        container_name: dsh-document-only-test
-        user: "1000:1000"
+            dockerfile: master-backend/Dockerfile
+        image: dsh-enterprise-master-backend:latest
+        container_name: dsh-enterprise-master-backend
         restart: unless-stopped
-        security_opt:
-            - no-new-privileges:true
-        ports:
-            - "127.0.0.1:3090:3090"
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
         environment:
-            - NODE_ENV=production
-            - DSH_HOME=/data/dsh_home
-            - USERS_DB_PATH=/data/db/users.db
-            - DSH_KEY_POOLS_FILE=/data/db/key_pools.json
-            - USERS_WORKSPACES_ROOT=/data/workspaces
-            - TEMP=/data/temp
-            - TMP=/data/temp
-            - PORT=3090
-            - ENABLE_DSH_TEST_ENDPOINTS=${ENABLE_DSH_TEST_ENDPOINTS:-false}
+            NODE_ENV: production
+            MASTER_PORT: 4000
+            POSTGRES_HOST: postgres
+            POSTGRES_PORT: 5432
+            POSTGRES_USER: ${POSTGRES_USER:-dsh_admin}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dsh_secure_password_2026}
+            POSTGRES_DB: ${POSTGRES_DB:-dsh_enterprise_db}
+            HOST_PROJECT_PATH: ${HOST_PROJECT_PATH:-C:/Users/Admin/Desktop/User Management}
+        ports:
+            - "4000:4000"
         volumes:
-            - ./docker-test-data/db:/data/db
-            - ./docker-test-data/dsh_home:/data/dsh_home
-            - ./docker-test-data/workspaces:/data/workspaces
-            - ./docker-test-data/temp:/data/temp
+            - /var/run/docker.sock:/var/run/docker.sock
+            - ./data:/app/data
+        depends_on:
+            postgres:
+                condition: service_healthy
+
+    # 3. Nginx Reverse Proxy (Dynamic Container Routing via auth_request)
+    nginx:
+        image: nginx:alpine
+        container_name: dsh-enterprise-nginx
+        restart: unless-stopped
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+        ports:
+            - "8080:80"
+        volumes:
+            - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+        depends_on:
+            - master-backend
+            - postgres
+
+volumes:
+    postgres_data:

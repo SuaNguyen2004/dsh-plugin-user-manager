@@ -1,6 +1,7 @@
 # Version control & internal logs
 .git
 .gitignore
+draft/
 test-results/
 
 # Windows / Host dependencies & caches

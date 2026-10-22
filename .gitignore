@@ -15,3 +15,7 @@ test-cloned-migration-data/
 test-cloned-migration-data*
 backup*/
 backup*
+
+draft/
+
+data/

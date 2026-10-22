@@ -1,0 +1,20 @@
+{
+  "name": "dsh-user-container-plugin",
+  "version": "1.0.0",
+  "description": "Lightweight containerized DSH plugin for isolated single-user container",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^2.4.5"
+  }
+}
+

@@ -1,0 +1,4 @@
+- insert:
+    - id: user-container-plugin
+      name: "dsh-user-container-plugin"
+

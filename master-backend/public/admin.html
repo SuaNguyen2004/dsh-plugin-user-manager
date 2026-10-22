@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek Harness - Trung tâm Quản trị Admin</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --primary: #238636;
+      --primary-hover: #2ea043;
+      --blue: #1f6feb;
+      --blue-hover: #388bfd;
+      --danger: #da3633;
+      --danger-hover: #f85149;
+      --warning: #d29922;
+      --purple: #8957e5;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logo-area { display: flex; align-items: center; gap: 12px; }
+    .logo-icon {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: linear-gradient(135deg, #1f6feb, #8957e5);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: bold; color: #fff;
+    }
+    .title { font-size: 18px; font-weight: 700; color: #f0f6fc; }
+    .badge {
+      display: inline-block; padding: 2px 8px; font-size: 11px;
+      border-radius: 12px; font-weight: 600; text-transform: uppercase;
+    }
+    .badge-admin { background: rgba(56, 139, 253, 0.2); color: #58a6ff; border: 1px solid rgba(56, 139, 253, 0.4); }
+    .badge-pending { background: rgba(210, 153, 34, 0.2); color: #f2cc60; border: 1px solid rgba(210, 153, 34, 0.4); }
+    .badge-active { background: rgba(35, 134, 54, 0.2); color: #56d364; border: 1px solid rgba(35, 134, 54, 0.4); }
+    .badge-banned { background: rgba(218, 54, 51, 0.2); color: #ff7b72; border: 1px solid rgba(218, 54, 51, 0.4); }
+    .badge-scope-all { background: rgba(35, 134, 54, 0.2); color: #56d364; border: 1px solid rgba(35, 134, 54, 0.4); cursor: pointer; }
+    .badge-scope-admin { background: rgba(210, 153, 34, 0.2); color: #f2cc60; border: 1px solid rgba(210, 153, 34, 0.4); cursor: pointer; }
+
+    .nav-user { display: flex; align-items: center; gap: 14px; }
+    .btn {
+      padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 600;
+      cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-blue { background: var(--blue); color: #fff; }
+    .btn-blue:hover { background: var(--blue-hover); }
+    .btn-danger { background: rgba(218, 54, 51, 0.15); color: #f85149; border-color: rgba(218, 54, 51, 0.4); }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    main { flex: 1; max-width: 1200px; width: 100%; margin: 0 auto; padding: 24px; }
+    .tabs {
+      display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 24px;
+    }
+    .tab-btn {
+      background: none; border: none; color: var(--text-muted);
+      padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab-btn.active { color: #f0f6fc; border-bottom-color: #f78166; }
+
+    .card {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px; margin-bottom: 24px;
+    }
+    .card-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: #f0f6fc; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th {
+      font-size: 12px; color: var(--text-muted); text-transform: uppercase;
+      padding: 10px 12px; border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 12px; font-size: 13px; border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+    }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    .actions-cell { display: flex; gap: 6px; }
+
+    /* Form Styles */
+    .form-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 16px;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+    .form-control {
+      background: #0d1117; border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 12px; color: var(--text); font-size: 13px; outline: none;
+    }
+    .form-control:focus { border-color: #58a6ff; }
+
+    .toast {
+      position: fixed; bottom: 24px; right: 24px; background: #238636; color: #fff;
+      padding: 12px 20px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      font-size: 14px; font-weight: 500; display: none; z-index: 1000;
+    }
+    .toast.err { background: #da3633; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-area">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <div class="title">DeepSeek Harness SaaS Enterprise</div>
+        <div style="font-size: 12px; color: var(--text-muted);">Master Backend Admin Gateway (RBAC)</div>
+      </div>
+    </div>
+    <div class="nav-user">
+      <button class="btn btn-primary" onclick="goToDshWorkspace()">
+        🚀 Vào DeepSeek Harness
+      </button>
+      <span id="admin-info" style="font-size: 13px;">Đang tải...</span>
+      <span class="badge badge-admin">ADMINISTRATOR</span>
+      <button class="btn btn-danger btn-sm" onclick="logout()">Đăng xuất</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchSection('users')">👥 Quản lý Người dùng & Duyệt Đăng ký</button>
+      <button class="tab-btn" onclick="switchSection('models')">🤖 Cấu hình AI Model & Phân quyền Key</button>
+    </div>
+
+    <!-- USERS TAB -->
+    <section id="sec-users" class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 class="card-title" style="margin-bottom: 0;">Danh sách tài khoản hệ thống</h2>
+        <button class="btn btn-blue btn-sm" onclick="loadUsers()">🔄 Làm mới</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Tên đăng nhập</th>
+            <th>Vai trò</th>
+            <th>Thư mục Workspace</th>
+            <th>Trạng thái</th>
+            <th>Hành động</th>
+          </tr>
+        </thead>
+        <tbody id="users-tbody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu...</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- MODELS TAB -->
+    <section id="sec-models" class="card" style="display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div>
+          <h2 class="card-title" style="margin-bottom: 4px;">Cấu hình AI Models & Phân quyền Người dùng</h2>
+          <div style="font-size: 12px; color: var(--text-muted);">Admin cấu hình Model & Provider tại DSH. Dashboard tự động đồng bộ và phân quyền cho User.</div>
+        </div>
+        <button class="btn btn-blue btn-sm" onclick="loadModels()">🔄 Làm mới từ DSH</button>
+      </div>
+
+      <!-- SYNC INFO BANNER -->
+      <div style="background: rgba(31, 111, 235, 0.08); border: 1px solid rgba(56, 139, 253, 0.3); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <div style="font-size: 28px;">🤖</div>
+          <div>
+            <div style="font-weight: 600; font-size: 14px; color: #58a6ff; margin-bottom: 4px;">Quản lý Phân quyền AI Model tập trung</div>
+            <div style="font-size: 12.5px; color: #8b949e; line-height: 1.5;">
+              Các Model & API Key dưới đây được <strong>đồng bộ tự động từ giao diện DeepSeek Harness của Admin</strong> (tại <em>Cài đặt ⚙️ → Models</em>).<br>
+              Tại bảng này, Admin thiết lập model nào chỉ dành riêng cho <strong>Admin</strong> hay chia sẻ cho <strong>Tất cả User</strong>.
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="goToDshWorkspace()" style="white-space: nowrap; height: 38px;">
+          ⚙️ Mở DSH để thêm / sửa Model
+        </button>
+      </div>
+
+      <!-- MODELS TABLE -->
+      <table>
+        <thead>
+          <tr>
+            <th>Tên Model & ID</th>
+            <th>Nhà cung cấp</th>
+            <th>Base URL / Endpoint</th>
+            <th>API Key</th>
+            <th>Phân quyền (Scope)</th>
+            <th>Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody id="models-tbody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu...</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const token = localStorage.getItem('dsh_user_token');
+    const userStr = localStorage.getItem('dsh_user_info');
+    let currentUser = null;
+
+    if (!token) {
+      window.location.href = '/login';
+    } else {
+      try {
+        currentUser = JSON.parse(userStr);
+        if (currentUser.role !== 'admin') {
+          alert('Truy cập bị từ chối! Trang này chỉ dành cho Admin.');
+          window.location.href = '/login';
+        }
+        document.getElementById('admin-info').textContent = `Admin: ${currentUser.username}`;
+      } catch (e) {
+        window.location.href = '/login';
+      }
+    }
+
+    function showToast(msg, isErr = false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = isErr ? 'toast err' : 'toast';
+      t.style.display = 'block';
+      setTimeout(() => { t.style.display = 'none'; }, 3500);
+    }
+
+    async function goToDshWorkspace() {
+      showToast('Đang kết nối không gian DeepSeek Harness của Admin...');
+      try {
+        const res = await fetch('/api/auth/launch', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        if (data.launchUrl) {
+          window.location.href = data.launchUrl;
+        } else {
+          window.location.href = '/';
+        }
+      } catch (e) {
+        window.location.href = '/';
+      }
+    }
+
+    function switchSection(sec) {
+      document.querySelectorAll('.tab-btn').forEach((b, i) => {
+        b.classList.toggle('active', (sec === 'users' && i === 0) || (sec === 'models' && i === 1));
+      });
+      document.getElementById('sec-users').style.display = sec === 'users' ? 'block' : 'none';
+      document.getElementById('sec-models').style.display = sec === 'models' ? 'block' : 'none';
+      if (sec === 'users') loadUsers();
+      if (sec === 'models') loadModels();
+    }
+
+    // --- USERS MANAGEMENT ---
+    async function loadUsers() {
+      try {
+        const res = await fetch('/api/admin/users', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 401 || res.status === 403) {
+          window.location.href = '/login';
+          return;
+        }
+        const data = await res.json();
+        const tbody = document.getElementById('users-tbody');
+        if (!data.users || data.users.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">Chưa có người dùng nào.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = data.users.map(u => {
+          let badgeClass = 'badge-pending';
+          if (u.status === 'active') badgeClass = 'badge-active';
+          if (u.status === 'banned') badgeClass = 'badge-banned';
+          if (u.role === 'admin') badgeClass = 'badge-admin';
+
+          return `
+            <tr>
+              <td><strong>#${u.id}</strong></td>
+              <td><strong>${u.username}</strong></td>
+              <td><span class="badge ${u.role === 'admin' ? 'badge-admin' : ''}">${u.role.toUpperCase()}</span></td>
+              <td style="font-family: monospace; color: var(--text-muted);">${u.workspace_path}</td>
+              <td><span class="badge ${badgeClass}">${u.status.toUpperCase()}</span></td>
+              <td class="actions-cell">
+                ${u.status === 'pending' ? `
+                  <button class="btn btn-primary btn-sm" onclick="setUserStatus(${u.id}, 'active')">✅ Duyệt</button>
+                  <button class="btn btn-danger btn-sm" onclick="setUserStatus(${u.id}, 'rejected')">❌ Từ chối</button>
+                ` : ''}
+                ${u.status === 'active' && u.role !== 'admin' ? `
+                  <button class="btn btn-danger btn-sm" onclick="setUserStatus(${u.id}, 'banned')">🚫 Vô hiệu hóa</button>
+                ` : ''}
+                ${u.status === 'banned' ? `
+                  <button class="btn btn-primary btn-sm" onclick="setUserStatus(${u.id}, 'active')">🔄 Mở lại</button>
+                ` : ''}
+              </td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        showToast('Lỗi khi tải danh sách người dùng: ' + err.message, true);
+      }
+    }
+
+    async function setUserStatus(userId, status) {
+      try {
+        const res = await fetch(`/api/admin/users/${userId}/status`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ status })
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(`Đã cập nhật trạng thái người dùng #${userId} thành ${status.toUpperCase()} thành công!`);
+          loadUsers();
+        } else {
+          showToast(d.error || 'Thao tác thất bại', true);
+        }
+      } catch (err) {
+        showToast('Lỗi kết nối: ' + err.message, true);
+      }
+    }
+
+    // --- MODELS MANAGEMENT ---
+    function onProviderChange() {
+      const p = document.getElementById('model-provider').value;
+      const baseInput = document.getElementById('model-baseurl');
+      if (p === 'deepseek') baseInput.value = 'https://api.deepseek.com';
+      else if (p === 'openai') baseInput.value = 'https://api.openai.com/v1';
+      else if (p === 'anthropic') baseInput.value = 'https://api.anthropic.com/v1';
+    }
+
+    async function loadModels() {
+      try {
+        const res = await fetch('/api/admin/models', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const d = await res.json();
+        const tbody = document.getElementById('models-tbody');
+        if (!d.models || d.models.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="6" style="text-align: center; padding: 32px 16px;">
+                <div style="font-size: 24px; margin-bottom: 8px;">ℹ️</div>
+                <div style="font-weight: 500; color: #f0f6fc; margin-bottom: 4px;">Chưa có Model nào được cấu hình tại DSH</div>
+                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Admin vui lòng mở DSH (Cài đặt ⚙️ → Models) để thêm Provider & Model.</div>
+                <button class="btn btn-primary btn-sm" onclick="goToDshWorkspace()">🚀 Mở DeepSeek Harness</button>
+              </td>
+            </tr>`;
+          return;
+        }
+
+        tbody.innerHTML = d.models.map(m => `
+          <tr>
+            <td>
+              <strong>${m.name}</strong><br>
+              <code style="color: var(--text-muted); font-size: 11px;">${m.id}</code>
+            </td>
+            <td><span class="badge badge-admin">${m.provider.toUpperCase()}</span></td>
+            <td><span style="font-size: 12px; color: #8b949e;">${m.baseURL || 'Mặc định'}</span></td>
+            <td><code style="color: ${m.hasKey ? '#56d364' : '#ff7b72'}; font-size: 11.5px;">${m.maskedKey}</code></td>
+            <td>
+              <button class="btn btn-sm ${m.scope === 'all_users' ? 'btn-primary' : 'btn-outline'}"
+                      style="${m.scope === 'admin_only' ? 'border-color: #d29922; color: #d29922;' : ''}"
+                      onclick="toggleModelScope('${m.id}', '${m.scope === 'admin_only' ? 'all_users' : 'admin_only'}')"
+                      title="Bấm để chuyển quyền">
+                ${m.scope === 'all_users' ? '🟢 Cả Admin & User' : '🔒 Chỉ riêng Admin'}
+              </button>
+            </td>
+            <td>
+              <button class="btn btn-sm ${m.enabled ? 'btn-primary' : 'btn-danger'}" onclick="toggleModelStatus('${m.id}', ${!m.enabled})">
+                ${m.enabled ? '⚡ Đang Bật' : '⏸ Đang Tắt'}
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        showToast('Không thể tải danh sách Model: ' + e.message, true);
+      }
+    }
+
+    async function saveModel(e) {
+      e.preventDefault();
+      const id = document.getElementById('model-id').value.trim();
+      const name = document.getElementById('model-name').value.trim();
+      const provider = document.getElementById('model-provider').value;
+      const apiKey = document.getElementById('model-apikey').value.trim();
+      const baseUrl = document.getElementById('model-baseurl').value.trim();
+      const scope = document.getElementById('model-scope').value;
+
+      try {
+        const res = await fetch('/api/admin/models', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ id, name, provider, apiKey, baseUrl, scope, enabled: true })
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(d.message || 'Lưu cấu hình Model thành công!');
+          document.getElementById('form-model').reset();
+          onProviderChange();
+          loadModels();
+        } else {
+          showToast(d.error || 'Lỗi khi lưu Model', true);
+        }
+      } catch (err) {
+        showToast('Lỗi kết nối: ' + err.message, true);
+      }
+    }
+
+    async function toggleModelEnabled(id, enabled) {
+      try {
+        const res = await fetch(`/api/admin/models/${encodeURIComponent(id)}/status`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ enabled })
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(d.message || 'Đã cập nhật trạng thái');
+          loadModels();
+        }
+      } catch (e) {
+        showToast('Lỗi: ' + e.message, true);
+      }
+    }
+
+    async function toggleModelScope(id, newScope) {
+      try {
+        const res = await fetch(`/api/admin/models/${encodeURIComponent(id)}/scope`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ scope: newScope })
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(d.message || 'Đã đổi phân quyền');
+          loadModels();
+        }
+      } catch (e) {
+        showToast('Lỗi: ' + e.message, true);
+      }
+    }
+
+    async function deleteModel(id) {
+      if (!confirm(`Bạn có chắc muốn xóa Model "${id}"?`)) return;
+      try {
+        const res = await fetch(`/api/admin/models/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const d = await res.json();
+        if (res.ok) {
+          showToast(d.message || 'Đã xóa Model');
+          loadModels();
+        }
+      } catch (e) {
+        showToast('Lỗi: ' + e.message, true);
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem('dsh_user_token');
+      localStorage.removeItem('dsh_user_info');
+      document.cookie = 'dsh_user_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+      fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      window.location.href = '/login';
+    }
+
+    // Auto load users on start
+    loadUsers();
+    onProviderChange();
+  </script>
+</body>
+</html>

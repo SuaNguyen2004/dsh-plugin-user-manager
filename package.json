@@ -8,6 +8,7 @@
     ".": "./lib/index.js"
   },
   "scripts": {
+    "start": "node start-enterprise-system.js",
     "test": "node test/run-tests.js",
     "test:unit": "node test/run-unit.js"
   },
@@ -32,7 +33,12 @@
   },
   "license": "MIT",
   "dependencies": {
+    "dockerode": "^4.0.2",
+    "js-yaml": "^5.5.0",
+    "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.13.0",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.23.1",
+    "sequelize": "^6.37.8"
   }
 }
