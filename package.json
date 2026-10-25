@@ -1,35 +1,15 @@
 {
-  "name": "dsh-plugin-user-manager",
-  "version": "0.1.0",
-  "description": "Multi-user authentication, workspace isolation and quota management for DeepSeek Harness (DSH)",
+  "name": "dsh-lite-enterprise",
+  "version": "2.0.0",
+  "description": "DeepSeek Harness Lite Enterprise: Shared Brain (dsh-main) + Gateway (dsh-gateway) + On-Demand Tool Sandbox (dsh-tool)",
   "type": "module",
-  "main": "lib/index.js",
-  "exports": {
-    ".": "./lib/index.js"
-  },
+  "main": "gateway/index.js",
   "scripts": {
     "start": "node start-enterprise-system.js",
+    "build:images": "node scripts/build-images.js",
+    "migrate:volumes": "node scripts/migrate-to-volumes.js",
     "test": "node test/run-tests.js",
-    "test:unit": "node test/run-unit.js"
-  },
-  "files": [
-    "lib",
-    "public",
-    "cordis.patch.yml",
-    "README.md"
-  ],
-  "keywords": [
-    "deepseek-harness",
-    "dsh",
-    "dsh-plugin",
-    "cordis",
-    "multi-user",
-    "auth"
-  ],
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
+    "test:phase1": "node test/phase1-structure-test.js"
   },
   "license": "MIT",
   "dependencies": {
@@ -39,7 +19,6 @@
     "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.13.0",
     "pdf-parse": "^2.4.5",
-    "pg": "^8.23.1",
     "sequelize": "^6.37.8",
     "sqlite3": "^6.0.1"
   }

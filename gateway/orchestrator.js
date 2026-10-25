@@ -1,347 +1,89 @@
-// master-backend/orchestrator.js
-// Docker Orchestrator for Multi-tenant Isolated User Sandboxes ("1 User = 1 Docker Container")
+// gateway/orchestrator.js
+// Shared-Brain Tool Sandbox Orchestrator (replaces legacy "1 user = 1 DSH container").
+// - Lazy spawn: tool container dsh-tool-<username> only created on the FIRST tool call.
+// - Exec Router core: every operation runs via `docker exec node /opt/dsh-tool/runner.js`.
+// - Idle Sweeper: containers idle > TOOL_IDLE_MINUTES (and no running exec) are stopped+removed.
+// - Reconcile on boot: already-running managed containers get lastToolUse = now.
+// Volumes are never deleted; they persist across container removal.
 
 import Docker from 'dockerode';
-import path from 'node:path';
-import fs from 'node:fs';
-import net from 'node:net';
-import { execSync } from 'node:child_process';
-import { masterModelManager } from './model-manager.js';
 
-// Initialize Dockerode instance (Named Pipe on Windows, Unix Socket on Linux)
 export const docker = new Docker(
   process.platform === 'win32'
     ? { socketPath: '//./pipe/docker_engine' }
     : { socketPath: '/var/run/docker.sock' }
 );
 
-export const BASE_IMAGE = 'dsh-user-base-image:latest';
-export const CONTAINER_RAM_LIMIT = 256 * 1024 * 1024; // 256 MB in bytes
-export const CONTAINER_CPU_LIMIT = 500000000;        // 0.5 CPU in nanoCPUs
+export const TOOL_IMAGE = process.env.DSH_TOOL_IMAGE || 'dsh-tool:latest';
+const TOOL_RAM_MB = parseInt(process.env.TOOL_RAM_MB || '256', 10);
+const TOOL_CPU_CORES = parseFloat(process.env.TOOL_CPU_CORES || '0.5', 10);
+const TOOL_PIDS_LIMIT = parseInt(process.env.TOOL_PIDS_LIMIT || '128', 10);
+const TOOL_NETWORK_DISABLED = (process.env.TOOL_NETWORK_DISABLED || 'true').toLowerCase() !== 'false';
+const TOOL_READY_TIMEOUT_MS = 15000;
+const MAX_EXEC_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-// Map to track user last activity timestamp in memory { [userId]: number }
-const userLastActivityMap = new Map();
+const lastToolUse = new Map();   // userId(string) -> epoch ms  (ONLY tool calls update this)
+const activeExecs = new Map();   // userId(string) -> number of execs currently running
+const spawnTails = new Map();    // userId(string) -> Promise (per-user mutex for creation)
 
-// Map to track allocated host ports for containers
-const allocatedPorts = new Set();
-let nextPortCandidate = 3100;
+export function sanitizeSegment(raw, fallback = 'user') {
+  const cleaned = String(raw ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/^\.+/, '');
+  return cleaned || fallback;
+}
 
-export const USERS_WORKSPACES_ROOT = process.env.USERS_WORKSPACES_ROOT || path.resolve(process.cwd(), 'data', 'workspaces');
+export function toolContainerName(username) {
+  return `dsh-tool-${sanitizeSegment(username, 'user')}`;
+}
 
-/**
- * Resolve the Docker network name shared with the Main Gateway
- */
+export function toolVolumeName(userId, role) {
+  return (role === 'admin' || Number(userId) === 1) ? 'dsh-vol-admin' : `dsh-vol-user${userId}`;
+}
+
+export function recordToolUse(userId) {
+  lastToolUse.set(String(userId), Date.now());
+}
+
+/** Testing/diagnostics helper: explicitly age a user's last tool-use timestamp. */
+export function setToolLastUse(userId, ts) {
+  lastToolUse.set(String(userId), Number(ts));
+}
+
+export function getToolLastUse(userId) {
+  return lastToolUse.get(String(userId));
+}
+
+export function getActiveExecCount(userId) {
+  return activeExecs.get(String(userId)) || 0;
+}
+
+/** Resolve the gateway's own docker network (containers join it unless network is disabled). */
 export async function getGatewayNetwork() {
   if (process.env.DOCKER_NETWORK) return process.env.DOCKER_NETWORK;
   try {
-    const self = await docker.getContainer(process.env.HOSTNAME || 'dsh-enterprise-main-gateway').inspect().catch(() => null);
-    if (self?.NetworkSettings?.Networks) {
-      const nets = Object.keys(self.NetworkSettings.Networks);
-      if (nets.length > 0) return nets[0];
-    }
+    const self = await docker.getContainer(process.env.HOSTNAME || 'dsh-gateway').inspect();
+    const nets = Object.keys(self?.NetworkSettings?.Networks || {});
+    if (nets.length > 0) return nets[0];
   } catch {}
-  return 'dsh-enterprise-lite_default';
+  return 'bridge';
 }
 
-export function toHostBindPath(targetPath) {
-  const hostProject = process.env.HOST_PROJECT_PATH;
-  if (!hostProject) return targetPath;
-
-  const resolved = path.resolve(targetPath);
-  const appPrefix = path.resolve('/app');
-  if (resolved.startsWith(appPrefix)) {
-    const rel = resolved.slice(appPrefix.length).replace(/^[/\\]+/, '');
-    return path.posix.join(hostProject.replace(/\\/g, '/'), rel.replace(/\\/g, '/'));
-  }
-  return targetPath;
+/** Per-user mutex: two concurrent tool calls must never create two containers. */
+async function withUserLock(userId, fn) {
+  const key = String(userId);
+  const tail = spawnTails.get(key) || Promise.resolve();
+  const run = tail.then(fn, fn);
+  spawnTails.set(key, run.then(() => {}, () => {}));
+  return run;
 }
 
-/**
- * Allocate a free port on localhost
- */
-export async function allocatePort() {
-  const containers = await docker.listContainers({ all: true }).catch(() => []);
-  const usedPorts = new Set(allocatedPorts);
-  for (const c of containers) {
-    if (c.Ports) {
-      for (const p of c.Ports) {
-        if (p.PublicPort) usedPorts.add(p.PublicPort);
-      }
-    }
-    const hostPort = c.Labels?.['dsh.host_port'];
-    if (hostPort) usedPorts.add(Number(hostPort));
-  }
-
-  for (let port = nextPortCandidate; port < 3999; port++) {
-    if (!usedPorts.has(port)) {
-      allocatedPorts.add(port);
-      nextPortCandidate = port + 1;
-      if (nextPortCandidate > 3990) nextPortCandidate = 3100;
-      return port;
-    }
-  }
-  throw new Error('No available port in range 3100-3999 for user containers');
-}
-
-/**
- * Release an allocated port
- */
-export function releasePort(port) {
-  if (port) {
-    allocatedPorts.delete(Number(port));
-  }
-}
-
-/**
- * Poll until the container port is actively accepting connections
- */
-export async function waitForPort(port, timeoutMs = 12000, targetHost = null) {
-  const host = targetHost || (process.platform === 'win32' ? '127.0.0.1' : (process.env.HOST_GATEWAY || 'host.docker.internal'));
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const isReady = await new Promise(resolve => {
-      const socket = new net.Socket();
-      socket.setTimeout(600);
-      socket.on('connect', () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.on('error', () => {
-        socket.destroy();
-        resolve(false);
-      });
-      socket.on('timeout', () => {
-        socket.destroy();
-        resolve(false);
-      });
-      socket.connect(port, host);
-    });
-    if (isReady) return true;
-    await new Promise(r => setTimeout(r, 400));
-  }
-  return false;
-}
-
-/**
- * Ensure workspace directory on host exists
- */
-export function ensureUserWorkspaceDir(userId, username) {
-  const root = process.env.USERS_WORKSPACES_ROOT || path.resolve(process.cwd(), 'data', 'workspaces');
-  const userDir = path.join(root, `${userId}_${username}`);
-  if (!fs.existsSync(userDir)) {
-    fs.mkdirSync(userDir, { recursive: true });
-  }
-  return userDir;
-}
-
-/**
- * Record API activity for a user
- */
-export function recordUserActivity(userId) {
-  userLastActivityMap.set(String(userId), Date.now());
-}
-
-/**
- * Get last activity time for a user
- */
-export function getUserLastActivity(userId) {
-  return userLastActivityMap.get(String(userId)) || Date.now();
-}
-
-/**
- * Helper to compute clear container name including user ID and username
- */
-export function getContainerName(userId, username) {
-  if (username) {
-    const cleanUsername = String(username).toLowerCase().replace(/[^a-z0-9_-]/g, '_');
-    return `dsh-user-${userId}-${cleanUsername}`;
-  }
-  return `dsh-user-${userId}`;
-}
-
-/**
- * Extract launch token from container startup logs (with retry for freshly started containers)
- */
-export async function getContainerLaunchToken(userId, maxWaitMs = 3000) {
-  const startTime = Date.now();
-  while (Date.now() - startTime < maxWaitMs) {
-    try {
-      const container = await findUserContainer(userId);
-      if (!container) return null;
-      const inspect = await container.inspect();
-      const containerName = inspect.Name?.replace(/^\//, '') || inspect.Id;
-
-      try {
-        const out = execSync(`docker logs --tail 200 ${containerName}`, {
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-          timeout: 2000
-        });
-        const match = out.match(/token=([a-zA-Z0-9_\-]+)/);
-        if (match) return match[1];
-      } catch {}
-
-      const logs = await container.logs({ stdout: true, stderr: true, tail: 200 });
-      const logStr = logs.toString('utf-8');
-      const tokenMatch = logStr.match(/token=([a-zA-Z0-9_\-]+)/);
-      if (tokenMatch) return tokenMatch[1];
-    } catch {}
-
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return null;
-}
-
-/**
- * Spawn or reuse a dedicated Docker sandbox container for a user
- * @param {number|string} userId
- * @param {string} username
- * @param {string} [role='user']
- * @returns {Promise<{containerId: string, name: string, port: number, launchToken: string|null, status: string, reused: boolean}>}
- */
-export async function spawnUserContainer(userId, username, role = 'user') {
-  const containerName = getContainerName(userId, username);
-  recordUserActivity(userId);
-
-  // 1. Check if container already exists
-  const existingContainer = await findUserContainer(userId);
-  if (existingContainer) {
-    const inspect = await existingContainer.inspect();
-    const port = extractHostPort(inspect);
-    const launchToken = await getContainerLaunchToken(userId);
-    const existingName = inspect.Name?.replace(/^\//, '') || containerName;
-
-    if (inspect.State.Running) {
-      return {
-        containerId: inspect.Id,
-        name: existingName,
-        ip: extractContainerIP(inspect),
-        internalPort: 3090,
-        port: 3090,
-        launchToken: null,
-        launchUrl: '/',
-        status: 'running',
-        reused: true
-      };
-    } else {
-      // Container exists but stopped -> start it
-      await existingContainer.start();
-      const reinspect = await existingContainer.inspect();
-      return {
-        containerId: inspect.Id,
-        name: existingName,
-        ip: extractContainerIP(reinspect),
-        internalPort: 3090,
-        port: 3090,
-        launchToken: null,
-        launchUrl: '/',
-        status: 'restarted',
-        reused: true
-      };
-    }
-  }
-
-  // 2. Prepare user isolated Docker Volume and persistent DSH home on host
-  const volumeName = (role === 'admin' && Number(userId) === 1) ? 'dsh-vol-admin' : `dsh-vol-user${userId}`;
+async function findToolContainer(userId) {
   try {
-    await docker.createVolume({ Name: volumeName });
-  } catch (e) {}
-
-  const userDshHomeDir = masterModelManager.prepareUserDshHome(userId, username, role);
-
-  // 3. Resolve shared gateway docker network
-  const gatewayNetwork = await getGatewayNetwork();
-
-  const binds = [
-    // Mount user isolated Docker Volume into container /data/workspace
-    `${volumeName}:/data/workspace:rw`,
-    // Mount host persistent DSH home into container /data/dsh_home
-    `${toHostBindPath(userDshHomeDir)}:/data/dsh_home:rw`
-  ];
-
-  if (role === 'admin') {
-    // Mount all user workspaces directory as Read-Only inside admin container
-    const workspacesRoot = USERS_WORKSPACES_ROOT;
-    if (!fs.existsSync(workspacesRoot)) fs.mkdirSync(workspacesRoot, { recursive: true });
-    binds.push(`${toHostBindPath(workspacesRoot)}:/data/all_users_ro:ro`);
-    // Mount all user dsh_homes directory as Read-Only inside admin container
-    const dshHomesRoot = process.env.DSH_USER_HOMES_DIR || path.resolve(process.cwd(), 'data/dsh_homes');
-    if (!fs.existsSync(dshHomesRoot)) fs.mkdirSync(dshHomesRoot, { recursive: true });
-    binds.push(`${toHostBindPath(dshHomesRoot)}:/data/all_dsh_homes_ro:ro`);
-  }
-
-  // 4. Create new container with strict hardware limits (internal Docker network only, no host port published)
-  const container = await docker.createContainer({
-    Image: BASE_IMAGE,
-    name: containerName,
-    Env: [
-      `DSH_USER_NAME=${username}`,
-      `DSH_USER_ID=${userId}`,
-      `DSH_USER_ROLE=${role}`,
-      `DSH_PORT=3090`,
-      `PORT=3090`,
-      ...masterModelManager.getContainerEnvForUser(role)
-    ],
-    Labels: {
-      'dsh.managed': 'true',
-      'dsh.user_id': String(userId),
-      'dsh.username': String(username),
-      'dsh.user_role': String(role),
-      'dsh.created_at': String(Date.now())
-    },
-    HostConfig: {
-      Memory: CONTAINER_RAM_LIMIT,       // 256 MB Limit
-      MemorySwap: CONTAINER_RAM_LIMIT,   // Disable swap beyond RAM
-      NanoCpus: CONTAINER_CPU_LIMIT,     // 0.5 CPU Limit
-      Binds: binds,
-      NetworkMode: gatewayNetwork,
-      RestartPolicy: {
-        Name: 'no'
-      }
-    }
-  });
-
-  // 5. Start container
-  await container.start();
-
-  const inspect = await container.inspect();
-  const containerIP = extractContainerIP(inspect);
-
-  // Wait until internal port 3090 is actively accepting connections
-  const isInsideDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER_CONTAINER === 'true';
-  const targetHost = isInsideDocker ? containerName : (containerIP || '127.0.0.1');
-  await waitForPort(3090, 15000, targetHost);
-
-  return {
-    containerId: inspect.Id,
-    name: containerName,
-    ip: containerIP,
-    internalPort: 3090,
-    port: 3090,
-    launchToken: null,
-    launchUrl: '/',
-    status: 'running',
-    reused: false
-  };
-}
-
-/**
- * Find container instance by userId (searches by dsh.user_id label or container name)
- */
-export async function findUserContainer(userId) {
-  try {
-    const containers = await docker.listContainers({
+    const list = await docker.listContainers({
       all: true,
-      filters: {
-        label: [`dsh.user_id=${userId}`]
-      }
+      filters: { label: [`dsh.userId=${userId}`] }
     });
-    if (containers.length > 0) {
-      return docker.getContainer(containers[0].Id);
-    }
+    if (list.length > 0) return docker.getContainer(list[0].Id);
   } catch {}
-
-  // Fallback: try direct legacy name
   try {
     const legacy = docker.getContainer(`dsh-user-${userId}`);
     await legacy.inspect();
@@ -351,162 +93,304 @@ export async function findUserContainer(userId) {
   }
 }
 
-/**
- * Helper to extract container IP across Docker network modes
- */
-export function extractContainerIP(inspect) {
-  if (inspect?.NetworkSettings?.IPAddress) {
-    return inspect.NetworkSettings.IPAddress;
+async function ensureVolume(userId, username, role) {
+  const Name = toolVolumeName(userId, role);
+  try {
+    await docker.createVolume({
+      Name,
+      Labels: { 'dsh.managed': 'true', 'dsh.userId': String(userId), 'dsh.username': sanitizeSegment(username) }
+    });
+  } catch (e) {
+    if (!/already exists|409/i.test(String(e?.message || e))) throw e;
   }
-  const networks = inspect?.NetworkSettings?.Networks;
-  if (networks) {
-    for (const netName of Object.keys(networks)) {
-      if (networks[netName]?.IPAddress) {
-        return networks[netName].IPAddress;
+  return Name;
+}
+
+/** Admin tool containers additionally mount every existing user volume read-only. */
+async function collectAdminRoBinds() {
+  const binds = [];
+  try {
+    const { Volumes = [] } = await docker.listVolumes({});
+    for (const v of Volumes) {
+      if (!/^dsh-vol-user/.test(v.Name)) continue;
+      const id = v.Labels?.['dsh.userId'] || v.Name.replace(/^dsh-vol-user/, '');
+      const uname = v.Labels?.['dsh.username'] || `user${id}`;
+      binds.push(`${v.Name}:/data/all_users_ro/${id}-${uname}:ro`);
+    }
+  } catch (e) {
+    console.warn('[orchestrator] Could not enumerate user volumes for admin RO mounts:', e.message);
+  }
+  return binds;
+}
+
+async function waitForToolReady(container) {
+  const deadline = Date.now() + TOOL_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const exec = await container.exec({
+        Cmd: ['test', '-f', '/run/dsh-tool/ready'],
+        AttachStdout: false, AttachStderr: false
+      });
+      const stream = await exec.start({});
+      await new Promise((resolve, reject) => {
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+      const info = await exec.inspect();
+      if (info.ExitCode === 0) return true;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return false;
+}
+
+/**
+ * Lazy-spawn or reuse the tool container for a user. Serialized per userId (mutex).
+ */
+export async function ensureToolContainer(userId, username, role = 'user') {
+  return withUserLock(userId, async () => {
+    const t0 = Date.now();
+    let container = await findToolContainer(userId);
+    if (container) {
+      const inspect = await container.inspect().catch(() => null);
+      if (inspect && inspect.State.Running) {
+        return { containerId: inspect.Id, name: inspect.Name.replace(/^\//, ''), reused: true, coldStartMs: Date.now() - t0 };
       }
+      if (inspect) {
+        await container.start().catch(() => {});
+        const ok = await waitForToolReady(container);
+        if (!ok) throw new Error(`Tool container restarted but never became ready (dsh-tool-${username})`);
+        recordToolUse(userId);
+        return { containerId: inspect.Id, name: toolContainerName(username), reused: true, restarted: true, coldStartMs: Date.now() - t0 };
+      }
+      container = null;
     }
-  }
-  return '127.0.0.1';
-}
 
-/**
- * Helper to extract host mapped port
- */
-function extractHostPort(inspect) {
-  try {
-    const ports = inspect.NetworkSettings?.Ports || inspect.HostConfig?.PortBindings;
-    const binding = ports['3090/tcp'];
-    if (binding && binding[0]) {
-      return Number(binding[0].HostPort);
+    const cleanUser = sanitizeSegment(username);
+    const vol = await ensureVolume(userId, cleanUser, role);
+    const binds = [`${vol}:/data/workspace:rw`];
+    if (role === 'admin') binds.push(...(await collectAdminRoBinds()));
+
+    const networkMode = TOOL_NETWORK_DISABLED ? 'none' : await getGatewayNetwork();
+
+    const created = await docker.createContainer({
+      Image: TOOL_IMAGE,
+      name: toolContainerName(cleanUser),
+      Env: [`DSH_ROLE=${role}`, `DSH_USERNAME=${cleanUser}`, `DSH_USER_ID=${String(userId)}`],
+      Labels: {
+        'dsh.managed': 'true',
+        'dsh.role': role,
+        'dsh.userId': String(userId),
+        'dsh.username': cleanUser,
+        'dsh.container_kind': 'tool',
+        'dsh.created_at': String(Date.now())
+      },
+      HostConfig: {
+        Binds: binds,
+        Memory: TOOL_RAM_MB * 1024 * 1024,
+        MemorySwap: TOOL_RAM_MB * 1024 * 1024,
+        NanoCpus: Math.round(TOOL_CPU_CORES * 1e9),
+        PidsLimit: TOOL_PIDS_LIMIT,
+        CapDrop: ['ALL'],
+        SecurityOpt: ['no-new-privileges:true'],
+        NetworkMode: networkMode,
+        RestartPolicy: { Name: 'no' }
+      }
+    });
+
+    await created.start();
+    const ok = await waitForToolReady(created);
+    if (!ok) {
+      try { await created.stop({ t: 1 }); } catch {}
+      throw new Error(`Tool container for ${cleanUser} did not become ready within ${TOOL_READY_TIMEOUT_MS}ms`);
     }
-  } catch {}
-  return null;
-}
-
-/**
- * Force kill and remove a user's container (Kill Switch / Logout)
- */
-export async function killUserContainer(userId) {
-  const container = await findUserContainer(userId);
-  if (!container) return false;
-
-  try {
-    const inspect = await container.inspect();
-    const port = extractHostPort(inspect);
-    if (port) releasePort(port);
-
-    if (inspect.State.Running) {
-      await container.kill();
-    }
-    await container.remove({ force: true });
-    userLastActivityMap.delete(String(userId));
-    return true;
-  } catch (err) {
-    console.error(`[Orchestrator] Error killing container for user ${userId}:`, err.message);
-    return false;
-  }
-}
-
-/**
- * List all active DSH-managed user containers with metrics
- */
-export async function listUserContainers() {
-  const containers = await docker.listContainers({
-    all: true,
-    filters: {
-      label: ['dsh.managed=true']
-    }
+    recordToolUse(userId);
+    const coldStartMs = Date.now() - t0;
+    console.log(`[orchestrator] Cold-started tool container ${toolContainerName(cleanUser)} in ${coldStartMs}ms`);
+    const inspect = await created.inspect();
+    return { containerId: inspect.Id, name: toolContainerName(cleanUser), reused: false, coldStartMs };
   });
+}
 
+function readStreamToString(stream, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let truncated = false;
+    stream.on('data', (c) => {
+      if (truncated) return;
+      chunks.push(c);
+      size += c.length;
+      if (size > limit) { truncated = true; resolve({ text: Buffer.concat(chunks).toString('utf8'), truncated }); }
+    });
+    stream.on('end', () => resolve({ text: Buffer.concat(chunks).toString('utf8'), truncated }));
+    stream.on('error', reject);
+  });
+}
+
+/**
+ * Run one tool call: lazy-spawn container if needed, then docker exec the runner
+ * with a JSON payload on stdin, collect one JSON line from stdout.
+ * Completion listeners are registered BEFORE writing stdin so the multiplexed
+ * exec stream can never deadlock on an already-fired `end` event.
+ */
+export async function execTool({ userId, username, role = 'user', tool, args = {}, workspace, cwd, timeoutMs = 60000, signal, token }) {
+  const { containerId } = await ensureToolContainer(userId, username, role);
+  const container = docker.getContainer(containerId);
+
+  activeExecs.set(String(userId), getActiveExecCount(userId) + 1);
+  try {
+    // Prefer the argv (--b64) channel: no stdin pipe, avoids exec-stream deadlock
+    // on Docker Desktop for Windows. Falls back gracefully if payload is huge.
+    const payload = JSON.stringify({ tool, args, userId, username: String(username), role, workspace, cwd, timeoutMs, token });
+    const useArgv = Buffer.byteLength(payload) < 100 * 1024; // keep within typical CreateProcess cmdline limits
+
+    const Cmd = useArgv
+      ? ['node', '/opt/dsh-tool/runner.js', '--b64', Buffer.from(payload, 'utf8').toString('base64')]
+      : ['node', '/opt/dsh-tool/runner.js'];
+
+    const exec = await container.exec({
+      Cmd,
+      AttachStdin: !useArgv, AttachStdout: true, AttachStderr: true, Tty: false
+    });
+    const stream = await exec.start({ hijack: true, stdin: !useArgv });
+
+    // Register completion listeners FIRST (before consuming/writing) to avoid a
+    // deadlock where `end` fires once and a later await would never resolve.
+    const finished = new Promise((resolve) => {
+      const done = () => resolve();
+      stream.once('end', done);
+      stream.once('close', done);
+      stream.once('error', done);
+    });
+    const outP = readStreamToString(stream, MAX_EXEC_OUTPUT_BYTES);
+
+    if (!useArgv) {
+      stream.write(payload);
+      stream.end();
+    }
+
+    const killed = { value: false };
+    const timer = setTimeout(async () => {
+      try { const i = await exec.inspect(); if (i.Running) { killed.value = true; await exec.kill().catch(() => {}); } } catch {}
+    }, Math.max(1000, Number(timeoutMs) || 60000));
+
+    const onAbort = async () => {
+      try { const i = await exec.inspect(); if (i.Running) { killed.value = true; await exec.kill().catch(() => {}); } } catch {}
+    };
+    if (signal) {
+      if (signal.aborted) await onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    await finished;
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener?.('abort', onAbort);
+
+    const info = await exec.inspect().catch(() => ({ ExitCode: 1 }));
+    const { text, truncated } = await outP;
+    recordToolUse(userId);
+
+    if (killed.value || info.ExitCode === 137) {
+      return { ok: false, error: `Tool execution exceeded ${timeoutMs}ms and was terminated.`, code: 'TOOL_TIMEOUT', tool };
+    }
+    const line = String(text || '').trim().split('\n').filter(Boolean).pop();
+    let parsed = null;
+    try { parsed = line ? JSON.parse(line) : null; } catch {}
+    if (!parsed) {
+      return {
+        ok: false,
+        error: `Tool runner exited (${info.ExitCode}) without a JSON result: ${truncated ? String(text).slice(0, 512) : String(line ?? text).slice(0, 512)}`,
+        code: 'TOOL_EXEC_FAILED',
+        tool
+      };
+    }
+    return { ...parsed, tool, containerId, exitCode: info.ExitCode, outputTruncated: Boolean(truncated) };
+  } finally {
+    activeExecs.set(String(userId), Math.max(0, getActiveExecCount(userId) - 1));
+  }
+}
+
+export async function listToolContainers({ all = true } = {}) {
+  const containers = await docker.listContainers({
+    all,
+    filters: { label: ['dsh.managed=true', 'dsh.container_kind=tool'] }
+  });
   const now = Date.now();
-
-  return containers.map(c => {
-    const userId = c.Labels['dsh.user_id'];
-    const username = c.Labels['dsh.username'];
-    const hostPort = c.Labels['dsh.host_port'] || null;
-    const lastActive = getUserLastActivity(userId);
-    const idleSeconds = Math.round((now - lastActive) / 1000);
-
+  return containers.map((c) => {
+    const userId = c.Labels['dsh.userId'];
+    const last = getToolLastUse(userId);
     return {
       containerId: c.Id,
-      name: c.Names[0]?.replace(/^\//, ''),
+      name: (c.Names?.[0] || '').replace(/^\//, ''),
       userId,
-      username,
+      username: c.Labels['dsh.username'],
+      role: c.Labels['dsh.role'],
       state: c.State,
-      status: c.Status,
-      port: hostPort,
-      lastActive,
-      idleSeconds
+      lastToolUse: last ?? null,
+      idleSeconds: last ? Math.round((now - last) / 1000) : null,
+      activeExecs: getActiveExecCount(userId)
     };
   });
 }
 
-/**
- * Scan and clean up containers that have been idle longer than threshold
- * @param {number} idleTimeoutMinutes
- */
-export async function cleanupIdleContainers(idleTimeoutMinutes = 30) {
-  const containers = await listUserContainers();
-  const idleTimeoutMs = idleTimeoutMinutes * 60 * 1000;
+/** Remove the user's tool container (stop + rm). Volume and data stay untouched. */
+export async function killToolContainer(userId) {
+  const container = await findToolContainer(userId);
+  if (!container) return false;
+  try {
+    const inspect = await container.inspect();
+    if (inspect.State.Running) await container.stop({ t: 3 }).catch(() => container.kill());
+    await container.remove({ force: true });
+    return true;
+  } catch (err) {
+    console.error(`[orchestrator] Error removing tool container for user ${userId}:`, err.message);
+    return false;
+  }
+}
+
+export async function cleanupIdleToolContainers(idleMinutes) {
+  const minutes = Number.isFinite(idleMinutes) ? idleMinutes : parseFloat(process.env.TOOL_IDLE_MINUTES || '15');
+  const idleMs = minutes * 60 * 1000;
   const now = Date.now();
   const killed = [];
-
-  for (const c of containers) {
-    const lastActive = getUserLastActivity(c.userId);
-    const idleMs = now - lastActive;
-
-    if (idleMs >= idleTimeoutMs) {
-      console.log(`[Orchestrator] Container ${c.name} idle for ${Math.round(idleMs / 1000)}s (> ${idleTimeoutMinutes}m). Terminating...`);
-      await killUserContainer(c.userId);
-      killed.push({ userId: c.userId, name: c.name, idleMinutes: Math.round(idleMs / 60000) });
+  for (const c of await listToolContainers({ all: false })) {
+    const userId = c.userId;
+    if (getActiveExecCount(userId) > 0) continue;
+    const last = getToolLastUse(userId);
+    const idle = last === undefined ? Infinity : now - last;
+    if (idle >= idleMs) {
+      console.log(`[orchestrator] Tool container ${c.name} idle for ${last === undefined ? 'unknown' : Math.round(idle / 1000) + 's'} (>${minutes}m). Removing (volume kept)...`);
+      if (await killToolContainer(userId)) killed.push({ userId, name: c.name });
     }
   }
-
   return killed;
 }
 
-// Background idle sweeper timer handle
 let sweeperInterval = null;
-
-export function startIdleSweeper(intervalMs = 60000, idleTimeoutMinutes = 30) {
-  if (sweeperInterval) clearInterval(sweeperInterval);
-  sweeperInterval = setInterval(async () => {
-    try {
-      await cleanupIdleContainers(idleTimeoutMinutes);
-    } catch (e) {
-      console.error('[Orchestrator] Error during idle container sweep:', e.message);
-    }
+export function startToolIdleSweeper(intervalMs = 60000) {
+  stopToolIdleSweeper();
+  sweeperInterval = setInterval(() => {
+    cleanupIdleToolContainers().catch((e) => console.error('[orchestrator] idle sweep error:', e.message));
   }, intervalMs);
   if (sweeperInterval.unref) sweeperInterval.unref();
 }
 
-export function stopIdleSweeper() {
-  if (sweeperInterval) {
-    clearInterval(sweeperInterval);
-    sweeperInterval = null;
-  }
+export function stopToolIdleSweeper() {
+  if (sweeperInterval) { clearInterval(sweeperInterval); sweeperInterval = null; }
 }
 
-/**
- * Clean up all user sandbox containers on server boot so containers only run on-demand upon login
- */
-export async function cleanupStaleUserContainersOnBoot() {
+/** Gateway restart: surviving tool containers count as "just used" so they are not swept instantly. */
+export async function reconcileOnBoot() {
   try {
-    const containers = await docker.listContainers({
-      all: true,
-      filters: { label: ['dsh.managed=true'] }
-    });
-    for (const c of containers) {
-      try {
-        const container = docker.getContainer(c.Id);
-        await container.stop({ t: 1 }).catch(() => {});
-        await container.remove({ force: true }).catch(() => {});
-      } catch {}
+    const running = await listToolContainers({ all: false });
+    for (const c of running) recordToolUse(c.userId);
+    if (running.length > 0) {
+      console.log(`[orchestrator] Reconciled ${running.length} running tool container(s) after gateway boot (lastToolUse = now).`);
     }
-    if (containers.length > 0) {
-      console.log(`[Orchestrator] Đã dọn dẹp ${containers.length} sandbox container cũ. Sandbox sẽ chỉ khởi động khi người dùng đăng nhập.`);
-    }
-  } catch (err) {
-    console.warn('[Orchestrator] Cảnh báo dọn dẹp container khi boot:', err.message);
+    return running.length;
+  } catch (e) {
+    console.warn('[orchestrator] reconcile failed:', e.message);
+    return 0;
   }
 }

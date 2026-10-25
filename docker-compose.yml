@@ -1,26 +1,73 @@
 # docker-compose.yml
-# DeepSeek Harness Lite Enterprise Stack (1 Unified Gateway + Dynamic Sandboxes)
+# DSH Lite Enterprise - Shared Brain (dsh-main) + Single Gateway (dsh-gateway) + On-Demand Tool Sandboxes (dsh-tool)
+# 100% Docker Named Volumes — ZERO host filesystem bind mounts
 
 name: dsh-enterprise-lite
 
 services:
-  # Main Gateway: Authentication + Reverse Proxy + SQLite + Docker Orchestrator
-  main-gateway:
+  dsh-gateway:
     build:
       context: .
-      dockerfile: master-backend/Dockerfile
-    image: dsh-enterprise-main-gateway:latest
-    container_name: dsh-enterprise-main-gateway
+      dockerfile: gateway/Dockerfile
+    image: dsh-gateway:latest
+    container_name: dsh-gateway
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     environment:
       NODE_ENV: production
-      PORT: 12345
-      SQLITE_PATH: /app/data/users.db
-      HOST_PROJECT_PATH: ${HOST_PROJECT_PATH:-C:/Users/Admin/Desktop/User Management}
+      PORT: ${PORT:-12345}
+      INTERNAL_PORT: ${INTERNAL_PORT:-3091}
+      SQLITE_PATH: /data/gateway/users.db
+      DSH_MAIN_URL: http://dsh-main:3090
+      DSH_TOOL_IMAGE: ${DSH_TOOL_IMAGE:-dsh-tool:latest}
+      DOCKER_NETWORK: dsh-enterprise-lite_default
+      JWT_SECRET: ${JWT_SECRET:-dsh-master-backend-enterprise-secret-2026}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dsh-internal-exec-secret-token-2026}
+      TOOL_IDLE_MINUTES: ${TOOL_IDLE_MINUTES:-15}
+      TOOL_RAM_MB: ${TOOL_RAM_MB:-256}
+      TOOL_CPU_CORES: ${TOOL_CPU_CORES:-0.5}
+      TOOL_PIDS_LIMIT: ${TOOL_PIDS_LIMIT:-128}
+      TOOL_NETWORK_DISABLED: ${TOOL_NETWORK_DISABLED:-true}
     ports:
       - "12345:12345"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./data:/app/data
+      - dsh-gateway-data:/data/gateway
+    tmpfs:
+      - /data/temp:size=64m,mode=1777
+    depends_on:
+      - dsh-main
+    networks:
+      - default
+
+  dsh-main:
+    build:
+      context: ./dsh-main
+      dockerfile: Dockerfile
+    image: dsh-main:latest
+    container_name: dsh-main
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3090
+      DSH_HOMES_ROOT: /data/dsh_homes
+      DSH_HOME: /data/dsh_homes/admin
+      GATEWAY_INTERNAL_URL: http://dsh-gateway:3091
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dsh-internal-exec-secret-token-2026}
+    volumes:
+      - dsh-homes:/data/dsh_homes
+    tmpfs:
+      - /data/temp:size=64m,mode=1777
+    networks:
+      - default
+
+volumes:
+  dsh-gateway-data:
+    name: dsh-gateway-data
+  dsh-homes:
+    name: dsh-homes
+  dsh-vol-admin:
+    name: dsh-vol-admin
+
+networks:
+  default:
+    name: dsh-enterprise-lite_default

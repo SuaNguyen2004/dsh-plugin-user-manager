@@ -1,0 +1,10 @@
+{
+  "name": "dsh-tool-sandbox",
+  "version": "1.0.0",
+  "description": "Isolated On-Demand Tool Sandbox for DSH Lite Enterprise (role-separated user/admin tools)",
+  "type": "module",
+  "dependencies": {
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^2.4.5"
+  }
+}

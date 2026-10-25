@@ -1,0 +1,63 @@
+{
+  "role": "user",
+  "version": "1.0.0",
+  "toolsDir": "/opt/dsh-tool/tools/user",
+  "allowedRoots": ["/data/workspace"],
+  "tools": {
+    "bash": {
+      "module": "shell.js",
+      "handler": "runBash",
+      "description": "Execute shell commands strictly inside user workspace"
+    },
+    "read_file": {
+      "module": "fs.js",
+      "handler": "readFile",
+      "description": "Read file content inside user workspace"
+    },
+    "write_file": {
+      "module": "fs.js",
+      "handler": "writeFile",
+      "description": "Write file into /data/workspace/<user>/<ws>/files/<category>/<file>"
+    },
+    "edit_file": {
+      "module": "fs.js",
+      "handler": "editFile",
+      "description": "Edit file in user workspace"
+    },
+    "list_dir": {
+      "module": "fs.js",
+      "handler": "listDir",
+      "description": "List directory entries in user workspace"
+    },
+    "stat_file": {
+      "module": "fs.js",
+      "handler": "statFile",
+      "description": "Stat file or directory in user workspace"
+    },
+    "read_bytes": {
+      "module": "fs.js",
+      "handler": "readBytes",
+      "description": "Read binary bytes of a file in user workspace"
+    },
+    "upload_file": {
+      "module": "fs.js",
+      "handler": "uploadFile",
+      "description": "Save uploaded file into /data/workspace/<user>/<ws>/files/<category>/<file>"
+    },
+    "search_files": {
+      "module": "fs.js",
+      "handler": "searchFiles",
+      "description": "Search file names or text inside user workspace"
+    },
+    "ensure_workspace": {
+      "module": "fs.js",
+      "handler": "ensureWorkspace",
+      "description": "Create or normalize workspace folder under /data/workspace/<user>/<ws>"
+    },
+    "read_document": {
+      "module": "doc-reader.js",
+      "handler": "readDocument",
+      "description": "Extract text from .docx, .pdf, .txt inside user workspace"
+    }
+  }
+}
