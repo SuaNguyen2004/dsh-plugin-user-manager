@@ -78,28 +78,74 @@ if [ -d "/data/all_users_ro" ]; then
     CURRENT_ADMIN_ID="${DSH_USER_ID:-1}"
     CURRENT_ADMIN_NAME="${DSH_USER_NAME:-admin}"
 
-    for user_dir in /data/all_users_ro/*; do
-        if [ -d "$user_dir" ]; then
-            dirname=$(basename "$user_dir")
-            
-            # Skip admin's own workspace folder (any folder containing admin)
-            if [ "$dirname" = "${CURRENT_ADMIN_ID}_${CURRENT_ADMIN_NAME}" ] || echo "$dirname" | grep -qi "admin"; then
-                continue
+    # Clean up old [View] legacy symlinks to avoid duplicate clutter
+    find /data/workspace -maxdepth 1 -type l -name "\[View\] *" -exec rm -f {} + 2>/dev/null || true
+
+    FOUND_ANY=0
+
+    # 1. Quét sâu (recursive) toàn bộ thư mục /data/all_users_ro tìm tất cả file workspace.json
+    find /data/all_users_ro -type f -name "workspace.json" 2>/dev/null > /tmp/ws_list.txt || true
+    if [ -s /tmp/ws_list.txt ]; then
+        while IFS= read -r ws_file || [ -n "$ws_file" ]; do
+            if [ -n "$ws_file" ]; then
+                ws_dir=$(dirname "$ws_file")
+                
+                # Bỏ qua nếu nằm trong thư mục của chính Admin
+                if echo "$ws_dir" | grep -qi "admin"; then
+                    continue
+                fi
+                
+                ws_name=$(basename "$ws_dir")
+                rel_path="${ws_dir#/data/all_users_ro/}"
+                user_part=$(echo "$rel_path" | cut -d'/' -f1)
+                user_name=$(echo "$user_part" | sed -E 's/^[0-9]+_//')
+                
+                if [ -n "$ws_name" ] && [ -n "$user_name" ]; then
+                    target_link="/data/workspace/${ws_name} (${user_name})"
+                    rm -f "$target_link" 2>/dev/null || true
+                    ln -s "$ws_dir" "$target_link"
+                    echo "[docker-entrypoint] Created RO symlink from workspace.json: $target_link -> $ws_dir"
+                    FOUND_ANY=1
+                fi
             fi
-            
-            friendly_name=$(echo "$dirname" | sed -E 's/^[0-9]+_//')
-            target_link="/data/workspace/[View] ${friendly_name}"
-            
-            # If friendly name already symlinked, fallback to full directory name
-            if [ -L "$target_link" ] && [ "$(readlink "$target_link")" != "$user_dir" ]; then
-                target_link="/data/workspace/[View] ${dirname}"
+        done < /tmp/ws_list.txt
+        rm -f /tmp/ws_list.txt
+    fi
+
+    # 2. Quét dự phòng (Fallback): Nếu chưa có file workspace.json thì quét các thư mục con hoặc thư mục gốc
+    if [ "$FOUND_ANY" -eq 0 ]; then
+        for user_dir in /data/all_users_ro/*; do
+            if [ -d "$user_dir" ]; then
+                dirname=$(basename "$user_dir")
+                if [ "$dirname" = "${CURRENT_ADMIN_ID}_${CURRENT_ADMIN_NAME}" ] || echo "$dirname" | grep -qi "admin"; then
+                    continue
+                fi
+                user_name=$(echo "$dirname" | sed -E 's/^[0-9]+_//')
+
+                sub_found=0
+                for sub_dir in "$user_dir"/*; do
+                    if [ -d "$sub_dir" ]; then
+                        sub_name=$(basename "$sub_dir")
+                        case "$sub_name" in
+                            .*) continue ;;
+                        esac
+                        target_link="/data/workspace/${sub_name} (${user_name})"
+                        rm -f "$target_link" 2>/dev/null || true
+                        ln -s "$sub_dir" "$target_link"
+                        echo "[docker-entrypoint] Created RO symlink (subfolder): $target_link -> $sub_dir"
+                        sub_found=1
+                    fi
+                done
+
+                if [ "$sub_found" -eq 0 ]; then
+                    target_link="/data/workspace/Workspace (${user_name})"
+                    rm -f "$target_link" 2>/dev/null || true
+                    ln -s "$user_dir" "$target_link"
+                    echo "[docker-entrypoint] Created RO symlink (root): $target_link -> $user_dir"
+                fi
             fi
-            
-            rm -f "$target_link" 2>/dev/null || true
-            ln -s "$user_dir" "$target_link"
-            echo "[docker-entrypoint] Created RO symlink: $target_link -> $user_dir"
-        fi
-    done
+        done
+    fi
 fi
 
 # Inject Enterprise User Profile, Logout Modal and Settings Guards into Web UI

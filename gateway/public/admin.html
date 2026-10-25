@@ -244,15 +244,10 @@
     async function goToDshWorkspace() {
       showToast('Đang kết nối không gian DeepSeek Harness của Admin...');
       try {
-        const res = await fetch('/api/auth/launch', {
+        await fetch('/api/auth/launch', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        const data = await res.json();
-        if (data.launchUrl) {
-          window.location.href = data.launchUrl;
-        } else {
-          window.location.href = '/';
-        }
+        window.location.href = '/';
       } catch (e) {
         window.location.href = '/';
       }

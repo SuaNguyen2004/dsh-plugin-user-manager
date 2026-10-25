@@ -5,10 +5,13 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    python3 \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-RUN npm ci --omit=dev --no-audit --no-fund
+RUN npm install --omit=dev --no-audit --no-fund && npm rebuild sqlite3 --build-from-source
 
 COPY database/ ./database/
 COPY master-backend/ ./master-backend/
@@ -16,14 +19,11 @@ COPY master-backend/ ./master-backend/
 RUN mkdir -p /app/data
 
 ENV NODE_ENV=production \
-    MASTER_PORT=4000 \
-    POSTGRES_HOST=postgres \
-    POSTGRES_PORT=5432 \
-    POSTGRES_USER=dsh_admin \
-    POSTGRES_PASSWORD=dsh_secure_password_2026 \
-    POSTGRES_DB=dsh_enterprise_db
+    PORT=12345 \
+    DOCKER_CONTAINER=true \
+    SQLITE_PATH=/app/data/users.db
 
-EXPOSE 4000
+EXPOSE 12345
 
 CMD ["node", "master-backend/index.js"]
 

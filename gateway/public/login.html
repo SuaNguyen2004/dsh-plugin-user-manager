@@ -428,8 +428,7 @@
           if (data.user.role === 'admin') {
             window.location.href = '/admin';
           } else {
-            const redirectUrl = data.container?.launchUrl || '/';
-            window.location.href = redirectUrl;
+            window.location.href = '/';
           }
         }, 1200);
 

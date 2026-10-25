@@ -1,70 +1,26 @@
 # docker-compose.yml
-# DeepSeek Harness Multi-tenant Enterprise SaaS Stack
+# DeepSeek Harness Lite Enterprise Stack (1 Unified Gateway + Dynamic Sandboxes)
 
-name: dsh-enterprise
+name: dsh-enterprise-lite
 
 services:
-    # 1. Cơ sở dữ liệu tập trung PostgreSQL
-    postgres:
-        image: postgres:18-alpine
-        container_name: dsh-enterprise-postgres
-        restart: unless-stopped
-        environment:
-            POSTGRES_USER: ${POSTGRES_USER:-dsh_admin}
-            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dsh_secure_password_2026}
-            POSTGRES_DB: ${POSTGRES_DB:-dsh_enterprise_db}
-        ports:
-            - "5432:5432"
-        volumes:
-            - postgres_data:/var/lib/postgresql
-        healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U dsh_admin -d dsh_enterprise_db"]
-            interval: 10s
-            timeout: 5s
-            retries: 5
-
-    # 2. Master Backend Gateway & Docker Orchestrator
-    master-backend:
-        build:
-            context: .
-            dockerfile: master-backend/Dockerfile
-        image: dsh-enterprise-master-backend:latest
-        container_name: dsh-enterprise-master-backend
-        restart: unless-stopped
-        extra_hosts:
-            - "host.docker.internal:host-gateway"
-        environment:
-            NODE_ENV: production
-            MASTER_PORT: 4000
-            POSTGRES_HOST: postgres
-            POSTGRES_PORT: 5432
-            POSTGRES_USER: ${POSTGRES_USER:-dsh_admin}
-            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dsh_secure_password_2026}
-            POSTGRES_DB: ${POSTGRES_DB:-dsh_enterprise_db}
-            HOST_PROJECT_PATH: ${HOST_PROJECT_PATH:-C:/Users/Admin/Desktop/User Management}
-        ports:
-            - "4000:4000"
-        volumes:
-            - /var/run/docker.sock:/var/run/docker.sock
-            - ./data:/app/data
-        depends_on:
-            postgres:
-                condition: service_healthy
-
-    # 3. Nginx Reverse Proxy (Dynamic Container Routing via auth_request)
-    nginx:
-        image: nginx:alpine
-        container_name: dsh-enterprise-nginx
-        restart: unless-stopped
-        extra_hosts:
-            - "host.docker.internal:host-gateway"
-        ports:
-            - "8080:80"
-        volumes:
-            - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-        depends_on:
-            - master-backend
-            - postgres
-
-volumes:
-    postgres_data:
+  # Main Gateway: Authentication + Reverse Proxy + SQLite + Docker Orchestrator
+  main-gateway:
+    build:
+      context: .
+      dockerfile: master-backend/Dockerfile
+    image: dsh-enterprise-main-gateway:latest
+    container_name: dsh-enterprise-main-gateway
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_ENV: production
+      PORT: 12345
+      SQLITE_PATH: /app/data/users.db
+      HOST_PROJECT_PATH: ${HOST_PROJECT_PATH:-C:/Users/Admin/Desktop/User Management}
+    ports:
+      - "12345:12345"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/app/data

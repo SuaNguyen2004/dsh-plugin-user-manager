@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import httpProxy from 'http-proxy';
 import { User, Session, hashPassword, initDatabase } from '../database/index.js';
 import { signToken, verifyToken, authenticate, requireAdmin, extractToken } from './jwt.js';
 import { masterKeyPool } from './key-pool.js';
@@ -13,8 +14,22 @@ import {
   cleanupStaleUserContainersOnBoot
 } from './orchestrator.js';
 
-const PORT = parseInt(process.env.MASTER_PORT || '4000', 10);
+const PORT = parseInt(process.env.PORT || process.env.MASTER_PORT || '12345', 10);
 const PUBLIC_DIR = path.resolve(import.meta.dirname, 'public');
+
+export function getProxyTarget(containerInfo) {
+  const isInsideDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER_CONTAINER === 'true';
+  if (isInsideDocker) {
+    if (containerInfo.name) {
+      return `http://${containerInfo.name}:${containerInfo.internalPort || 3090}`;
+    }
+    if (containerInfo.ip && containerInfo.ip !== '127.0.0.1') {
+      return `http://${containerInfo.ip}:${containerInfo.internalPort || 3090}`;
+    }
+    return `http://host.docker.internal:${containerInfo.port || 3090}`;
+  }
+  return `http://127.0.0.1:${containerInfo.port || 3090}`;
+}
 
 export function parseJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -50,6 +65,21 @@ export function sendJson(res, statusCode, data, headers = {}) {
 }
 
 export function createMasterServer() {
+  const proxy = httpProxy.createProxyServer({
+    ws: true,
+    changeOrigin: true,
+    autoRewrite: true,
+    xfwd: true
+  });
+
+  proxy.on('error', (err, req, res) => {
+    console.error('[Main Gateway Proxy Error]:', err.message);
+    if (res && res.writeHead && !res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'Sandbox Container unreachable or starting up...', detail: err.message }));
+    }
+  });
+
   const server = http.createServer(async (req, res) => {
     // CORS Preflight
     if (req.method === 'OPTIONS') {
@@ -68,14 +98,14 @@ export function createMasterServer() {
       // 1. Healthcheck
       if (pathname === '/health' && req.method === 'GET') {
         return sendJson(res, 200, {
-          service: 'dsh-master-backend',
+          service: 'dsh-main-gateway',
           status: 'healthy',
           port: PORT,
           timestamp: new Date().toISOString()
         });
       }
 
-      // 1.1 Gateway Route Resolver for Nginx Dynamic Reverse Proxy (auth_request)
+      // 1.1 Gateway Route Resolver for helper / status checks
       if (pathname === '/api/gateway/resolve-route' && (req.method === 'GET' || req.method === 'HEAD')) {
         const token = extractToken(req);
         if (!token) {
@@ -116,11 +146,12 @@ export function createMasterServer() {
         }
       }
 
-      // 2. Serve Login / Register Page (GET / or GET /login or GET /login.html)
-      if ((pathname === '/' || pathname === '/login' || pathname === '/login.html') && req.method === 'GET') {
+      // 2. Serve Login / Register Page (GET /login or GET /login.html)
+      if ((pathname === '/login' || pathname === '/login.html') && (req.method === 'GET' || req.method === 'HEAD')) {
         const filePath = path.join(PUBLIC_DIR, 'login.html');
         if (fs.existsSync(filePath)) {
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          if (req.method === 'HEAD') return res.end();
           return res.end(fs.readFileSync(filePath, 'utf8'));
         }
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -128,10 +159,11 @@ export function createMasterServer() {
       }
 
       // 2.1 Serve Admin Dashboard (GET /admin or GET /admin.html)
-      if ((pathname === '/admin' || pathname === '/admin.html') && req.method === 'GET') {
+      if ((pathname === '/admin' || pathname === '/admin.html') && (req.method === 'GET' || req.method === 'HEAD')) {
         const filePath = path.join(PUBLIC_DIR, 'admin.html');
         if (fs.existsSync(filePath)) {
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          if (req.method === 'HEAD') return res.end();
           return res.end(fs.readFileSync(filePath, 'utf8'));
         }
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -568,10 +600,106 @@ export function createMasterServer() {
         });
       }
 
-      return sendJson(res, 404, { error: 'Endpoint không tồn tại trên Master Backend Gateway.' });
+      // 7. Dynamic User Sandbox Reverse Proxy (Handles all other routes, workspace & assets)
+      const token = extractToken(req);
+      if (!token) {
+        const accept = req.headers['accept'] || '';
+        if (accept.includes('text/html') || pathname === '/') {
+          res.writeHead(302, { Location: '/login' });
+          return res.end();
+        }
+        return sendJson(res, 401, { error: 'Unauthorized: Vui lòng đăng nhập.' });
+      }
+
+      const decoded = verifyToken(token);
+      if (!decoded) {
+        const accept = req.headers['accept'] || '';
+        if (accept.includes('text/html') || pathname === '/') {
+          res.writeHead(302, {
+            'Set-Cookie': 'dsh_user_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+            Location: '/login'
+          });
+          return res.end();
+        }
+        return sendJson(res, 401, { error: 'Unauthorized: Token không hợp lệ hoặc đã hết hạn.' });
+      }
+
+      const user = await User.findByPk(decoded.id);
+      if (!user || user.status !== 'active') {
+        return sendJson(res, 403, { error: 'Tài khoản không hoạt động hoặc đã bị vô hiệu hóa.' });
+      }
+
+      // Record activity and ensure container is running
+      recordUserActivity(user.id);
+      let containerInfo;
+      try {
+        containerInfo = await spawnUserContainer(user.id, user.username, user.role);
+      } catch (err) {
+        console.error(`[Main Gateway] Error spawning container for ${user.username}:`, err.message);
+        return sendJson(res, 502, { error: `Không thể khởi động User Sandbox: ${err.message}` });
+      }
+
+      const target = getProxyTarget(containerInfo);
+
+      // Forward user details
+      req.headers['x-forwarded-host'] = req.headers['host'];
+      req.headers['x-user-id'] = String(user.id);
+      req.headers['x-user-name'] = String(user.username);
+      req.headers['x-user-role'] = String(user.role);
+
+      return proxy.web(req, res, { target }, (err) => {
+        console.error(`[Proxy Web Error for ${user.username}]:`, err.message);
+        if (!res.headersSent) {
+          sendJson(res, 502, { error: `User Sandbox chưa sẵn sàng. Vui lòng thử lại sau vài giây (${err.message})` });
+        }
+      });
     } catch (err) {
       console.error('[Master Backend] Error:', err);
       return sendJson(res, 500, { error: err.message || 'Lỗi hệ thống nội bộ.' });
+    }
+  });
+
+  // Handle WebSocket upgrades for real-time DSH communication
+  server.on('upgrade', async (req, socket, head) => {
+    try {
+      const token = extractToken(req);
+      if (!token) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      const decoded = verifyToken(token);
+      if (!decoded) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      const user = await User.findByPk(decoded.id);
+      if (!user || user.status !== 'active') {
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      recordUserActivity(user.id);
+      const containerInfo = await spawnUserContainer(user.id, user.username, user.role);
+      const target = getProxyTarget(containerInfo);
+
+      req.headers['x-forwarded-host'] = req.headers['host'];
+      req.headers['x-user-id'] = String(user.id);
+      req.headers['x-user-name'] = String(user.username);
+      req.headers['x-user-role'] = String(user.role);
+
+      proxy.ws(req, socket, head, { target }, (err) => {
+        console.error(`[WebSocket Proxy Error for ${user.username}]:`, err.message);
+        try { socket.destroy(); } catch {}
+      });
+    } catch (err) {
+      console.error('[WebSocket Upgrade Error]:', err.message);
+      try {
+        socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+        socket.destroy();
+      } catch {}
     }
   });
 
@@ -589,7 +717,7 @@ export async function startMasterServer(port = PORT) {
       reject(err);
     });
     server.listen(port, () => {
-      console.log(`[Master Backend] Service đang hoạt động độc lập tại cổng ${port}`);
+      console.log(`[Main Gateway] Service đang hoạt động tại cổng ${port}`);
       resolve(server);
     });
   });

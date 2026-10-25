@@ -6,9 +6,12 @@ LABEL description="DeepSeek Harness Lightweight Dedicated User Container"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    python3 \
+    python3-docx \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @deepseek-ai/dsh@0.2.0-rc.2 dshmarket@1.66.45
+RUN npm install -g @deepseek-ai/dsh@0.2.0-rc.2 dshmarket@1.66.45 mammoth@1.13.0
 
 WORKDIR /app
 
@@ -27,7 +30,7 @@ RUN chmod 666 /usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepsee
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
 
-RUN npm link
+RUN npm link --no-audit --no-fund
 
 RUN chown -R root:root /app && chmod -R 755 /app
 

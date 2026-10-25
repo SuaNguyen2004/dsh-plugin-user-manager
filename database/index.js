@@ -18,7 +18,7 @@ Session.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 export async function initDatabase(options = {}) {
   await testConnection();
   await sequelize.sync(options);
-  console.log('[PostgreSQL] Database synchronized successfully with 4 core tables.');
+  console.log('[SQLite] Database synchronized successfully with 4 core tables.');
 }
 
 export { sequelize, testConnection, hashPassword, verifyPassword, generateToken };

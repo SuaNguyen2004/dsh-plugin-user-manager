@@ -33,6 +33,13 @@ export function extractToken(req) {
     }
   }
 
+  // 3. Query parameter (fallback for WebSockets and direct browser navigation)
+  try {
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    const qToken = parsedUrl.searchParams.get('token') || parsedUrl.searchParams.get('dsh_user_token');
+    if (qToken) return qToken;
+  } catch {}
+
   return null;
 }
 

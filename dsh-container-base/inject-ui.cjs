@@ -229,6 +229,43 @@ try {
   }
   .dsh-btn-logout:hover { background: #da3633; color: #fff; }
 
+  ${isAdmin ? `
+  /* Admin Workspace Monitoring Styles */
+  #dsh-monitoring-section-header {
+    margin: 14px 8px 6px 8px;
+    padding: 6px 10px;
+    background: rgba(140, 149, 159, 0.12);
+    border: 1px dashed rgba(140, 149, 159, 0.35);
+    border-radius: 6px;
+    color: #8b949e;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+    box-sizing: border-box;
+  }
+  #dsh-monitoring-section-header .dsh-monitoring-title {
+    color: #8b949e;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .dsh-monitored-workspace-row {
+    background-color: rgba(140, 149, 159, 0.14) !important;
+    border-left: 3px solid #8b949e !important;
+    border-radius: 6px !important;
+    margin-top: 2px !important;
+    margin-bottom: 2px !important;
+    transition: background-color 0.2s ease;
+  }
+  .dsh-monitored-workspace-row:hover {
+    background-color: rgba(140, 149, 159, 0.24) !important;
+  }
+  ` : ''}
+
   ${!isAdmin ? `
   [data-key="models"],
   [data-tab="models"],
@@ -428,6 +465,132 @@ try {
     } catch (e) {}
     window.location.href = '/login';
   }
+
+  ${isAdmin ? `
+  (function monitorReadOnlyComposer() {
+    function updateComposerState() {
+      // Detect if user is viewing a [View] session
+      const selectedRow = document.querySelector('[class*="sessionRow"][class*="selected"], [class*="selected"]');
+      let isReadOnly = false;
+      if (selectedRow) {
+        let parent = selectedRow.parentElement;
+        while (parent && parent !== document.body) {
+          const groupTitle = parent.querySelector('[class*="projectRow"] [class*="title"], [class*="title"]');
+          if (groupTitle && groupTitle.textContent && groupTitle.textContent.includes('[View]')) {
+            isReadOnly = true;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+      }
+
+      if (!isReadOnly) {
+        const headings = document.querySelectorAll('header, [role="banner"], [class*="header"]');
+        for (const h of headings) {
+          if (h.textContent && h.textContent.includes('[View]')) {
+            isReadOnly = true;
+            break;
+          }
+        }
+      }
+
+      const composer = document.querySelector('[contenteditable="true"], textarea, div[role="textbox"]');
+      const noticeId = 'dsh-ro-composer-notice';
+      let notice = document.getElementById(noticeId);
+
+      if (isReadOnly) {
+        if (composer) {
+          composer.setAttribute('data-dsh-ro', 'true');
+          composer.style.opacity = '0.5';
+          composer.style.pointerEvents = 'none';
+        }
+        const sendBtn = document.querySelector('button[type="submit"], button[aria-label*="Send"], button[title*="Send"]');
+        if (sendBtn) {
+          sendBtn.setAttribute('disabled', 'true');
+          sendBtn.style.opacity = '0.4';
+          sendBtn.style.pointerEvents = 'none';
+        }
+        if (!notice && composer && composer.parentElement) {
+          notice = document.createElement('div');
+          notice.id = noticeId;
+          notice.style.cssText = 'padding: 8px 12px; margin-bottom: 8px; background: rgba(56, 139, 253, 0.12); border: 1px solid rgba(56, 139, 253, 0.35); border-radius: 8px; color: #58a6ff; font-size: 12px; display: flex; align-items: center; gap: 8px; user-select: none;';
+          notice.innerHTML = '<span>🔒</span><span><strong>Chế độ chỉ xem:</strong> Bạn đang xem phiên làm việc của User khác. Không thể gửi tin nhắn vào phiên này.</span>';
+          composer.parentElement.insertBefore(notice, composer);
+        }
+      } else {
+        if (composer && composer.getAttribute('data-dsh-ro')) {
+          composer.removeAttribute('data-dsh-ro');
+          composer.style.opacity = '';
+          composer.style.pointerEvents = '';
+        }
+        const sendBtn = document.querySelector('button[type="submit"], button[aria-label*="Send"], button[title*="Send"]');
+        if (sendBtn && sendBtn.getAttribute('disabled')) {
+          sendBtn.removeAttribute('disabled');
+          sendBtn.style.opacity = '';
+          sendBtn.style.pointerEvents = '';
+        }
+        if (notice) notice.remove();
+      }
+    }
+
+    setInterval(updateComposerState, 400);
+  })();
+
+  (function initAdminMonitoringSidebar() {
+    function isMonitoredWorkspace(text) {
+      if (!text) return false;
+      const clean = text.trim();
+      // Match pattern like "(tên_user)" (excluding admin)
+      const parenMatch = clean.match(/\\(([^)]+)\\)/);
+      if (parenMatch) {
+        const u = parenMatch[1].trim().toLowerCase();
+        if (u !== 'admin') return true;
+      }
+      // Support legacy [View] prefix as well
+      if (clean.includes('[View]')) return true;
+      return false;
+    }
+
+    function updateMonitoringSection() {
+      // Find all workspace folder rows on the sidebar
+      const rows = document.querySelectorAll('[class*="projectRow"], [data-row-key^="workspace:"]');
+      let firstMonitoredRow = null;
+
+      rows.forEach(row => {
+        const titleEl = row.querySelector('[class*="title"]') || row;
+        const titleText = titleEl ? (titleEl.textContent || '') : '';
+        if (isMonitoredWorkspace(titleText)) {
+          if (!firstMonitoredRow) {
+            firstMonitoredRow = row;
+          }
+          row.classList.add('dsh-monitored-workspace-row');
+        } else {
+          row.classList.remove('dsh-monitored-workspace-row');
+        }
+      });
+
+      // Handle the header insertion/removal
+      let header = document.getElementById('dsh-monitoring-section-header');
+      if (firstMonitoredRow) {
+        if (!header) {
+          header = document.createElement('div');
+          header.id = 'dsh-monitoring-section-header';
+          header.innerHTML = '<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"flex-shrink:0;\"><path d=\"M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z\"></path><circle cx=\"12\" cy=\"12\" r=\"3\"></circle></svg><span class=\"dsh-monitoring-title\">KHU VỰC GIÁM SÁT (READ-ONLY)</span>';
+        }
+
+        const parentContainer = firstMonitoredRow.parentElement;
+        if (parentContainer && firstMonitoredRow.previousElementSibling !== header) {
+          parentContainer.insertBefore(header, firstMonitoredRow);
+        }
+      } else if (header) {
+        header.remove();
+      }
+    }
+
+    setInterval(updateMonitoringSection, 500);
+    setTimeout(updateMonitoringSection, 1000);
+  })();
+  ` : ''}
 
   ${!isAdmin ? `
   (function monitorAndHideModelsTab() {

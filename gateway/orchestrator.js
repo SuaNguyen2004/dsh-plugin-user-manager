@@ -26,6 +26,23 @@ const userLastActivityMap = new Map();
 const allocatedPorts = new Set();
 let nextPortCandidate = 3100;
 
+export const USERS_WORKSPACES_ROOT = process.env.USERS_WORKSPACES_ROOT || path.resolve(process.cwd(), 'data', 'workspaces');
+
+/**
+ * Resolve the Docker network name shared with the Main Gateway
+ */
+export async function getGatewayNetwork() {
+  if (process.env.DOCKER_NETWORK) return process.env.DOCKER_NETWORK;
+  try {
+    const self = await docker.getContainer(process.env.HOSTNAME || 'dsh-enterprise-main-gateway').inspect().catch(() => null);
+    if (self?.NetworkSettings?.Networks) {
+      const nets = Object.keys(self.NetworkSettings.Networks);
+      if (nets.length > 0) return nets[0];
+    }
+  } catch {}
+  return 'dsh-enterprise-lite_default';
+}
+
 export function toHostBindPath(targetPath) {
   const hostProject = process.env.HOST_PROJECT_PATH;
   if (!hostProject) return targetPath;
@@ -200,9 +217,9 @@ export async function spawnUserContainer(userId, username, role = 'user') {
         name: existingName,
         ip: extractContainerIP(inspect),
         internalPort: 3090,
-        port,
-        launchToken,
-        launchUrl: launchToken ? `/?token=${launchToken}` : '/',
+        port: 3090,
+        launchToken: null,
+        launchUrl: '/',
         status: 'running',
         reused: true
       };
@@ -215,35 +232,37 @@ export async function spawnUserContainer(userId, username, role = 'user') {
         name: existingName,
         ip: extractContainerIP(reinspect),
         internalPort: 3090,
-        port,
-        launchToken,
-        launchUrl: launchToken ? `/?token=${launchToken}` : '/',
+        port: 3090,
+        launchToken: null,
+        launchUrl: '/',
         status: 'restarted',
         reused: true
       };
     }
   }
 
-  // 2. Prepare user isolated workspace directory and persistent DSH home on host
-  const hostWorkspaceDir = ensureUserWorkspaceDir(userId, username);
-  const userDshHomeDir = masterModelManager.prepareUserDshHome(userId, username, role);
-  const workspacesRoot = process.env.USERS_WORKSPACES_ROOT || path.resolve(process.cwd(), 'data', 'workspaces');
-  if (!fs.existsSync(workspacesRoot)) {
-    fs.mkdirSync(workspacesRoot, { recursive: true });
-  }
+  // 2. Prepare user isolated Docker Volume and persistent DSH home on host
+  const volumeName = (role === 'admin' && Number(userId) === 1) ? 'dsh-vol-admin' : `dsh-vol-user${userId}`;
+  try {
+    await docker.createVolume({ Name: volumeName });
+  } catch (e) {}
 
-  // 3. Allocate unique host port for this container
-  const hostPort = await allocatePort();
+  const userDshHomeDir = masterModelManager.prepareUserDshHome(userId, username, role);
+
+  // 3. Resolve shared gateway docker network
+  const gatewayNetwork = await getGatewayNetwork();
 
   const binds = [
-    // Mount host workspace directory into container /data/workspace
-    `${toHostBindPath(hostWorkspaceDir)}:/data/workspace:rw`,
+    // Mount user isolated Docker Volume into container /data/workspace
+    `${volumeName}:/data/workspace:rw`,
     // Mount host persistent DSH home into container /data/dsh_home
     `${toHostBindPath(userDshHomeDir)}:/data/dsh_home:rw`
   ];
 
   if (role === 'admin') {
     // Mount all user workspaces directory as Read-Only inside admin container
+    const workspacesRoot = USERS_WORKSPACES_ROOT;
+    if (!fs.existsSync(workspacesRoot)) fs.mkdirSync(workspacesRoot, { recursive: true });
     binds.push(`${toHostBindPath(workspacesRoot)}:/data/all_users_ro:ro`);
     // Mount all user dsh_homes directory as Read-Only inside admin container
     const dshHomesRoot = process.env.DSH_USER_HOMES_DIR || path.resolve(process.cwd(), 'data/dsh_homes');
@@ -251,7 +270,7 @@ export async function spawnUserContainer(userId, username, role = 'user') {
     binds.push(`${toHostBindPath(dshHomesRoot)}:/data/all_dsh_homes_ro:ro`);
   }
 
-  // 4. Create new container with strict hardware limits
+  // 4. Create new container with strict hardware limits (internal Docker network only, no host port published)
   const container = await docker.createContainer({
     Image: BASE_IMAGE,
     name: containerName,
@@ -268,7 +287,6 @@ export async function spawnUserContainer(userId, username, role = 'user') {
       'dsh.user_id': String(userId),
       'dsh.username': String(username),
       'dsh.user_role': String(role),
-      'dsh.host_port': String(hostPort),
       'dsh.created_at': String(Date.now())
     },
     HostConfig: {
@@ -276,9 +294,7 @@ export async function spawnUserContainer(userId, username, role = 'user') {
       MemorySwap: CONTAINER_RAM_LIMIT,   // Disable swap beyond RAM
       NanoCpus: CONTAINER_CPU_LIMIT,     // 0.5 CPU Limit
       Binds: binds,
-      PortBindings: {
-        '3090/tcp': [{ HostPort: String(hostPort), HostIp: '0.0.0.0' }]
-      },
+      NetworkMode: gatewayNetwork,
       RestartPolicy: {
         Name: 'no'
       }
@@ -288,27 +304,22 @@ export async function spawnUserContainer(userId, username, role = 'user') {
   // 5. Start container
   await container.start();
 
-  // Wait until port is accepting connections
-  await waitForPort(hostPort);
-
   const inspect = await container.inspect();
+  const containerIP = extractContainerIP(inspect);
 
-  // Capture launch token (poll up to 15s to allow DSH web server to print token)
-  let launchToken = null;
-  for (let attempt = 0; attempt < 25; attempt++) {
-    await new Promise(r => setTimeout(r, 500));
-    launchToken = await getContainerLaunchToken(userId);
-    if (launchToken) break;
-  }
+  // Wait until internal port 3090 is actively accepting connections
+  const isInsideDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER_CONTAINER === 'true';
+  const targetHost = isInsideDocker ? containerName : (containerIP || '127.0.0.1');
+  await waitForPort(3090, 15000, targetHost);
 
   return {
     containerId: inspect.Id,
     name: containerName,
-    ip: extractContainerIP(inspect),
+    ip: containerIP,
     internalPort: 3090,
-    port: hostPort,
-    launchToken,
-    launchUrl: launchToken ? `/?token=${launchToken}` : '/',
+    port: 3090,
+    launchToken: null,
+    launchUrl: '/',
     status: 'running',
     reused: false
   };

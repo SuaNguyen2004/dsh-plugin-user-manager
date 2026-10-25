@@ -1,7 +1,7 @@
 import { startMasterServer } from './server.js';
 import { User, hashPassword } from '../database/index.js';
 
-const PORT = parseInt(process.env.MASTER_PORT || '4000', 10);
+const PORT = parseInt(process.env.PORT || process.env.MASTER_PORT || '12345', 10);
 
 async function main() {
   try {

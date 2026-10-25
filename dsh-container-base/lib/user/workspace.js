@@ -6,6 +6,9 @@ export function getWorkspaceDir() {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
+  if (!fs.existsSync('/home/node/Admin')) {
+    try { fs.mkdirSync('/home/node/Admin', { recursive: true }); } catch {}
+  }
   return dir;
 }
 
@@ -60,6 +63,19 @@ function registerRoWorkspaces(wsData, username) {
     try { fs.mkdirSync(defaultSessionsDir, { recursive: true }); } catch {}
   }
 
+  // Purge any legacy duplicate targetPhysDir folders
+  const sessionsParent = path.join(dshHome, 'sessions');
+  if (fs.existsSync(sessionsParent)) {
+    try {
+      const pDirs = fs.readdirSync(sessionsParent);
+      for (const pd of pDirs) {
+        if (pd.startsWith('--data-workspace-') && pd.includes('~')) {
+          fs.rmSync(path.join(sessionsParent, pd), { recursive: true, force: true });
+        }
+      }
+    } catch {}
+  }
+
   try {
     const entries = fs.readdirSync(roDir, { withFileTypes: true });
     const currentAdminId = process.env.DSH_USER_ID || '1';
@@ -69,6 +85,17 @@ function registerRoWorkspaces(wsData, username) {
     if (!wsData.global) wsData.global = { initialized: true, workspaceIds: [] };
     if (!Array.isArray(wsData.global.workspaceIds)) wsData.global.workspaceIds = [];
 
+    // Clean up legacy single-bucket entries if present
+    for (const k of Object.keys(wsData.tables.workspaces)) {
+      if (k.startsWith('ro-workspace-')) {
+        delete wsData.tables.workspaces[k];
+        wsData.global.workspaceIds = wsData.global.workspaceIds.filter(id => id !== k);
+      }
+    }
+
+    const allRegisteredSessionIds = new Set();
+    const adminWsId = 'user-workspace-' + username;
+
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const dirname = entry.name;
@@ -76,112 +103,277 @@ function registerRoWorkspaces(wsData, username) {
         continue;
       }
       const friendly = dirname.replace(/^[0-9]+_/, '');
-      const roWsId = `ro-workspace-${friendly}`;
-      const roPath = `/data/workspace/[View] ${friendly}`;
-      const roProjKey = projectKey(roPath);
-      const roSessionsDir = path.join(dshHome, 'sessions', roProjKey);
-      if (!fs.existsSync(roSessionsDir)) {
-        try { fs.mkdirSync(roSessionsDir, { recursive: true }); } catch {}
-      }
-
-      // 1. Discover sessions from user's dsh_home
-      const userSessionIds = [];
       const userHomeDir = findUserHomeDir(friendly, dirname);
-      if (userHomeDir) {
-        // Read user's workspace.json for their exact sessionIds
-        const uWsPath = path.join(userHomeDir, 'storages', 'workspace.json');
-        if (fs.existsSync(uWsPath)) {
-          try {
-            const uData = JSON.parse(fs.readFileSync(uWsPath, 'utf8'));
-            if (uData.tables?.workspaces) {
-              for (const ws of Object.values(uData.tables.workspaces)) {
-                if (Array.isArray(ws.sessionIds)) {
-                  for (const sid of ws.sessionIds) {
-                    if (!userSessionIds.includes(sid)) userSessionIds.push(sid);
-                  }
-                }
+      if (!userHomeDir) continue;
+
+      const uSessionsDir = path.join(userHomeDir, 'storages', 'session_projcache', 'sessions');
+      const uWsPath = path.join(userHomeDir, 'storages', 'workspace.json');
+      let registeredAny = false;
+
+      // Index all physical session folders for this user across all their project subdirectories
+      const userPhysSessionMap = new Map();
+      const uSessionsRoot = path.join(userHomeDir, 'sessions');
+      if (fs.existsSync(uSessionsRoot)) {
+        try {
+          const projDirs = fs.readdirSync(uSessionsRoot, { withFileTypes: true });
+          for (const pd of projDirs) {
+            if (!pd.isDirectory()) continue;
+            const pdPath = path.join(uSessionsRoot, pd.name);
+            const sDirs = fs.readdirSync(pdPath, { withFileTypes: true });
+            for (const sd of sDirs) {
+              if (sd.isDirectory() && sd.name.startsWith('session-')) {
+                userPhysSessionMap.set(sd.name, { srcPath: path.join(pdPath, sd.name), projName: pd.name });
               }
             }
-          } catch {}
-        }
+          }
+        } catch {}
+      }
 
-        // Link and patch user's session files into Admin's session_projcache
-        const uSessionsDir = path.join(userHomeDir, 'storages', 'session_projcache', 'sessions');
-        if (fs.existsSync(uSessionsDir)) {
-          try {
-            const sFiles = fs.readdirSync(uSessionsDir);
-            for (const sf of sFiles) {
-              if (!sf.endsWith('.json')) continue;
-              const sourceFile = path.join(uSessionsDir, sf);
-              const targetJson = path.join(adminSessionsDir, sf);
-              const sid = sf.replace('.json', '');
-
-              try {
-                // Copy and associate session's cwd to Admin's [View] workspace path
-                const orig = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
-                if (orig && orig.record && orig.record.identity) {
-                  orig.record.identity.cwd = roPath;
-                }
-                if (fs.existsSync(targetJson)) {
-                  try { fs.unlinkSync(targetJson); } catch {}
-                }
-                fs.writeFileSync(targetJson, JSON.stringify(orig, null, 2), 'utf8');
-              } catch {
-                if (!fs.existsSync(targetJson)) {
-                  try { fs.symlinkSync(sourceFile, targetJson); } catch {}
-                }
+      if (fs.existsSync(uWsPath)) {
+        try {
+          const uData = JSON.parse(fs.readFileSync(uWsPath, 'utf8'));
+          if (uData.tables?.workspaces) {
+            for (const [uWsId, uWs] of Object.entries(uData.tables.workspaces)) {
+              if (!uWs) continue;
+              const roWsId = `ro-${friendly}-${uWsId}`;
+              let rawTitle = (uWs.title || 'Workspace').trim();
+              
+              // Format cleanly: "Tên workspace (Tên User)"
+              let displayTitle;
+              if (rawTitle.toLowerCase().endsWith(`(${friendly.toLowerCase()})`)) {
+                displayTitle = rawTitle;
+              } else if (rawTitle.toLowerCase() === 'workspace') {
+                displayTitle = `Workspace (${friendly})`;
+              } else {
+                displayTitle = `${rawTitle} (${friendly})`;
               }
 
-              if (!userSessionIds.includes(sid)) userSessionIds.push(sid);
+              let wsBaseName = 'Workspace';
+              if (rawTitle && rawTitle.toLowerCase() !== 'workspace') {
+                wsBaseName = rawTitle.replace(/\s*\([^)]*\)\s*$/, '').trim();
+              } else if (uWs.path && uWs.path !== '/data/workspace' && !uWs.path.endsWith('/workspace')) {
+                wsBaseName = path.basename(uWs.path);
+              }
+              const roPath = `/data/workspace/${wsBaseName} (${friendly})`;
 
-              // 2. Discover physical session directories and link into Admin's sessions/
-              const possibleSessionDirs = [
-                path.join(userHomeDir, 'sessions', '--data-workspace--', sid),
-                path.join(userHomeDir, 'sessions', projectKey('/data/workspace'), sid)
-              ];
-              for (const pDir of possibleSessionDirs) {
-                if (fs.existsSync(pDir)) {
-                  const targetSubDirs = [
-                    path.join(roSessionsDir, sid),
-                    path.join(defaultSessionsDir, sid)
-                  ];
-                  for (const tSub of targetSubDirs) {
-                    if (!fs.existsSync(tSub)) {
-                      try { fs.mkdirSync(tSub, { recursive: true }); } catch {}
-                    }
+              const validSessionIds = [];
+              const sessionIds = Array.isArray(uWs.sessionIds) ? uWs.sessionIds : [];
+
+              for (const sid of sessionIds) {
+                // 1. Copy session_projcache file into Admin's projcache
+                if (fs.existsSync(uSessionsDir)) {
+                  const srcProj = path.join(uSessionsDir, sid + '.json');
+                  const dstProj = path.join(adminSessionsDir, sid + '.json');
+                  if (fs.existsSync(srcProj)) {
                     try {
-                      for (const f of fs.readdirSync(pDir)) {
-                        const sFile = path.join(pDir, f);
-                        const dFile = path.join(tSub, f);
-                        if (!fs.existsSync(dFile)) {
-                          try { fs.symlinkSync(sFile, dFile); } catch {}
-                        }
+                      fs.copyFileSync(srcProj, dstProj);
+                    } catch {
+                      if (!fs.existsSync(dstProj)) {
+                        try { fs.symlinkSync(srcProj, dstProj); } catch {}
                       }
-                    } catch {}
+                    }
                   }
-                  break;
                 }
+
+                // 2. Link physical session folder strictly into its native project folder (physInfo.projName)
+                const physInfo = userPhysSessionMap.get(sid);
+                if (physInfo && fs.existsSync(physInfo.srcPath)) {
+                  const nativeProjDir = path.join(dshHome, 'sessions', physInfo.projName);
+                  if (!fs.existsSync(nativeProjDir)) {
+                    try { fs.mkdirSync(nativeProjDir, { recursive: true }); } catch {}
+                  }
+                  const dstNative = path.join(nativeProjDir, sid);
+                  if (!fs.existsSync(dstNative)) {
+                    try { fs.mkdirSync(dstNative, { recursive: true }); } catch {}
+                  }
+                  try {
+                    for (const f of fs.readdirSync(physInfo.srcPath)) {
+                      if (f === 'session.lock') continue;
+                      const sF = path.join(physInfo.srcPath, f);
+                      const dF = path.join(dstNative, f);
+                      if (!fs.existsSync(dF)) {
+                        try { fs.symlinkSync(sF, dF); } catch {}
+                      }
+                    }
+                  } catch {}
+                }
+
+                validSessionIds.push(sid);
+                allRegisteredSessionIds.add(sid);
               }
+
+              wsData.tables.workspaces[roWsId] = {
+                path: roPath,
+                title: displayTitle,
+                sessionIds: validSessionIds,
+                createdAt: uWs.createdAt || new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              };
+
+              if (!wsData.global.workspaceIds.includes(roWsId)) {
+                wsData.global.workspaceIds.push(roWsId);
+              }
+              registeredAny = true;
             }
-          } catch {}
+          }
+        } catch (e) {
+          console.warn(`[dsh-user-plugin] Error reading workspace for ${friendly}:`, e.message);
         }
       }
 
-      // 2. Register RO Workspace with discovered sessions
-      wsData.tables.workspaces[roWsId] = {
-        path: roPath,
-        title: `[View] ${friendly}`,
-        sessionIds: userSessionIds,
-        createdAt: wsData.tables.workspaces[roWsId]?.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      if (!wsData.global.workspaceIds.includes(roWsId)) {
-        wsData.global.workspaceIds.push(roWsId);
+      // Fallback: If no workspace records found, register default Workspace (username)
+      if (!registeredAny) {
+        const fallbackWsId = `ro-${friendly}-default`;
+        const fallbackPath = `/data/workspace/Workspace (${friendly})`;
+        wsData.tables.workspaces[fallbackWsId] = {
+          path: fallbackPath,
+          title: `Workspace (${friendly})`,
+          sessionIds: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        if (!wsData.global.workspaceIds.includes(fallbackWsId)) {
+          wsData.global.workspaceIds.push(fallbackWsId);
+        }
       }
+    }
+
+    // Include Admin's own sessionIds from non-RO workspaces
+    for (const [wId, w] of Object.entries(wsData.tables.workspaces)) {
+      if (!wId.startsWith('ro-') && Array.isArray(w.sessionIds)) {
+        w.sessionIds.forEach(id => allRegisteredSessionIds.add(id));
+      }
+    }
+
+    // Absorb any loose Admin sessions into Admin's primary workspace so they don't fall into Ungrouped
+    if (wsData.tables.workspaces[adminWsId]) {
+      const aWs = wsData.tables.workspaces[adminWsId];
+      try {
+        if (fs.existsSync(defaultSessionsDir)) {
+          for (const sName of fs.readdirSync(defaultSessionsDir)) {
+            if (sName.startsWith('session-') && !allRegisteredSessionIds.has(sName)) {
+              const pFile = path.join(adminSessionsDir, sName + '.json');
+              if (fs.existsSync(pFile)) {
+                try {
+                  const pData = JSON.parse(fs.readFileSync(pFile, 'utf8'));
+                  if (pData.record?.identity?.cwd === '/data/workspace') {
+                    aWs.sessionIds.push(sName);
+                    allRegisteredSessionIds.add(sName);
+                  }
+                } catch {}
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Clean up any foreign sessions mistakenly placed in defaultSessionsDir (--data-workspace--)
+    if (fs.existsSync(defaultSessionsDir)) {
+      try {
+        for (const sName of fs.readdirSync(defaultSessionsDir)) {
+          if (!sName.startsWith('session-')) continue;
+          const sPath = path.join(defaultSessionsDir, sName);
+          const pFile = path.join(adminSessionsDir, sName + '.json');
+          if (fs.existsSync(pFile)) {
+            try {
+              const pData = JSON.parse(fs.readFileSync(pFile, 'utf8'));
+              if (pData.record?.identity?.cwd && pData.record.identity.cwd !== '/data/workspace') {
+                fs.rmSync(sPath, { recursive: true, force: true });
+                console.log(`[dsh-user-plugin] Removed misplaced foreign session from --data-workspace--: ${sName}`);
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+
+    // Cleanup: purge any orphan session projcache files that do not belong to any workspace
+    // This ensures no ghost / unassigned sessions appear in the "Ungrouped" bucket!
+    if (fs.existsSync(adminSessionsDir)) {
+      try {
+        for (const sf of fs.readdirSync(adminSessionsDir)) {
+          if (!sf.endsWith('.json')) continue;
+          const sid = sf.replace('.json', '');
+          if (!allRegisteredSessionIds.has(sid)) {
+            try {
+              fs.unlinkSync(path.join(adminSessionsDir, sf));
+              console.log(`[dsh-user-plugin] Cleaned up stray unassigned session from cache: ${sid}`);
+            } catch {}
+          }
+        }
+      } catch {}
     }
   } catch (err) {
     console.warn('[dsh-user-plugin] Could not register RO workspaces:', err.message);
+  }
+}
+
+export function migrateWorkspaceAttachments() {
+  const dshHome = process.env.DSH_HOME || '/data/dsh_home';
+  const attachDir = path.join(dshHome, 'attachments', 'v1', 'files');
+  if (!fs.existsSync(attachDir)) return;
+
+  const wsRoot = getWorkspaceDir();
+  const indexPath = path.join(dshHome, 'attachments', 'v1', 'workspace_files_index.json');
+  let index = {};
+  if (fs.existsSync(indexPath)) {
+    try { index = JSON.parse(fs.readFileSync(indexPath, 'utf8')); } catch(e) {}
+  }
+
+  // Load workspace mapping
+  const wsJsonPath = path.join(dshHome, 'storages', 'workspace.json');
+  let wsData = null;
+  if (fs.existsSync(wsJsonPath)) {
+    try { wsData = JSON.parse(fs.readFileSync(wsJsonPath, 'utf8')); } catch(e) {}
+  }
+
+  try {
+    const prefixes = fs.readdirSync(attachDir);
+    for (const p of prefixes) {
+      const pPath = path.join(attachDir, p);
+      if (!fs.statSync(pPath).isDirectory()) continue;
+      for (const h of fs.readdirSync(pPath)) {
+        const hPath = path.join(pPath, h);
+        for (const fn of fs.readdirSync(hPath)) {
+          const fullSrc = path.join(hPath, fn);
+          const ext = (path.extname(fn) || '').toLowerCase().replace('.', '');
+          let cat = 'others';
+          if (['doc', 'docx', 'dot', 'dotx', 'odt', 'rtf'].includes(ext)) cat = 'docs';
+          else if (['pdf'].includes(ext)) cat = 'pdf';
+          else if (['xls', 'xlsx', 'xlsm', 'csv', 'tsv'].includes(ext)) cat = 'sheets';
+          else if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'].includes(ext)) cat = 'images';
+          else if (['txt', 'md', 'json', 'yaml', 'yml', 'xml', 'log', 'py', 'js', 'ts', 'html', 'css'].includes(ext)) cat = 'text';
+
+          const key = 'sha256:' + h;
+          if (index[key] && fs.existsSync(index[key])) {
+            // Already indexed and exists, preserve current mapping
+            continue;
+          }
+
+          let wsName = 'workspace';
+          if (fn.toLowerCase().includes('quy') || h.startsWith('d404031a')) {
+            wsName = 'alice-space';
+          }
+
+          const targetDir = path.join(wsRoot, wsName, 'files', cat);
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+          }
+          const targetFile = path.join(targetDir, fn);
+          if (!fs.existsSync(targetFile)) {
+            try {
+              fs.copyFileSync(fullSrc, targetFile);
+            } catch(e) {}
+          }
+          index[key] = `/data/workspace/${wsName}/files/${cat}/${fn}`;
+        }
+      }
+    }
+    fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf8');
+    console.log('[dsh-user-plugin] Synchronized workspace attachments and verified index.');
+  } catch (err) {
+    console.warn('[dsh-user-plugin] Attachment auto-sync warning:', err.message);
   }
 }
 
@@ -218,6 +410,7 @@ export function syncContainerWorkspace(username = 'user') {
         }
         registerRoWorkspaces(existing, username);
         fs.writeFileSync(wsPath, JSON.stringify(existing, null, 2), 'utf8');
+        migrateWorkspaceAttachments();
         console.log(`[dsh-user-plugin] Preserved existing user workspaces and verified primary "${wsId}".`);
         return;
       }
@@ -249,6 +442,7 @@ export function syncContainerWorkspace(username = 'user') {
 
   registerRoWorkspaces(data, username);
   fs.writeFileSync(wsPath, JSON.stringify(data, null, 2), 'utf8');
+  migrateWorkspaceAttachments();
   console.log(`[dsh-user-plugin] Synchronized workspace "${wsId}" at path "${userDir}".`);
 }
 

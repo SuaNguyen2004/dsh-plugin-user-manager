@@ -1,15 +1,11 @@
 import { Sequelize } from 'sequelize';
+import path from 'node:path';
 
-const DB_HOST = process.env.POSTGRES_HOST || '127.0.0.1';
-const DB_PORT = parseInt(process.env.POSTGRES_PORT || '5432', 10);
-const DB_USER = process.env.POSTGRES_USER || 'dsh_admin';
-const DB_PASS = process.env.POSTGRES_PASSWORD || 'dsh_secure_password_2026';
-const DB_NAME = process.env.POSTGRES_DB || 'dsh_enterprise_db';
+const SQLITE_STORAGE = process.env.SQLITE_PATH || path.resolve(process.cwd(), 'data', 'users.db');
 
-const DATABASE_URL = process.env.DATABASE_URL || `postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
-
-export const sequelize = new Sequelize(DATABASE_URL, {
-  dialect: 'postgres',
+export const sequelize = new Sequelize({
+  dialect: 'sqlite',
+  storage: SQLITE_STORAGE,
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
     max: 10,
@@ -22,9 +18,10 @@ export const sequelize = new Sequelize(DATABASE_URL, {
 export async function testConnection() {
   try {
     await sequelize.authenticate();
+    console.log(`[SQLite] Connected successfully to database: ${SQLITE_STORAGE}`);
     return true;
   } catch (error) {
-    console.error('[PostgreSQL] Connection failed:', error.message);
+    console.error('[SQLite] Connection failed:', error.message);
     throw error;
   }
 }

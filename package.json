@@ -34,11 +34,13 @@
   "license": "MIT",
   "dependencies": {
     "dockerode": "^4.0.2",
+    "http-proxy": "^1.18.1",
     "js-yaml": "^5.5.0",
     "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.13.0",
     "pdf-parse": "^2.4.5",
     "pg": "^8.23.1",
-    "sequelize": "^6.37.8"
+    "sequelize": "^6.37.8",
+    "sqlite3": "^6.0.1"
   }
 }
