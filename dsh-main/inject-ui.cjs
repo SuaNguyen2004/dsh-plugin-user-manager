@@ -319,6 +319,11 @@ function renderEnterpriseUiMarkup(opts = {}) {
       </div>
 
       <div class="dsh-modal-actions">
+        ${isAdmin ? `
+          <a href="/admin" class="dsh-btn dsh-btn-admin">
+            🛡️ Trang Quản trị Admin
+          </a>
+        ` : ''}
         <button class="dsh-btn dsh-btn-logout" onclick="performDshLogout()">
           🚪 Đăng xuất (Logout)
         </button>

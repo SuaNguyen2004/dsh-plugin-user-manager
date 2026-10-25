@@ -147,6 +147,25 @@ export function createGatewayServer() {
         return serveStatic(res, path.join(PUBLIC_DIR, 'login.html'), req.method);
       }
 
+      // 2.1 Admin Dashboard (protected by admin RBAC)
+      if ((pathname === '/admin' || pathname === '/admin.html') && (req.method === 'GET' || req.method === 'HEAD')) {
+        const token = extractToken(req);
+        if (!token) {
+          res.writeHead(302, { Location: '/login' });
+          return res.end();
+        }
+        const decoded = verifyToken(token);
+        if (!decoded) {
+          res.writeHead(302, { Location: '/login' });
+          return res.end();
+        }
+        if (decoded.role !== 'admin') {
+          res.writeHead(302, { Location: '/' });
+          return res.end();
+        }
+        return serveStatic(res, path.join(PUBLIC_DIR, 'admin.html'), req.method);
+      }
+
       // 3. Register (public; requires admin approval)
       if (pathname === '/api/auth/register' && req.method === 'POST') {
         const { username, password } = await parseJsonBody(req);
