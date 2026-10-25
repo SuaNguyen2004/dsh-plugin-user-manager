@@ -19,3 +19,5 @@ backup*
 draft/
 
 data/
+.claude/
+docs/

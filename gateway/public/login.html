@@ -331,7 +331,7 @@
       </form>
 
       <div class="policy-note">
-        Kiến trúc SaaS Enterprise: 1 User = 1 Docker Container phần cứng cách ly an toàn.
+        Kiến trúc Shared Brain: 1 Gateway duy nhất + 1 DSH core dùng chung + Sandbox tool on-demand cách ly theo user.
       </div>
     </div>
   </div>
@@ -421,16 +421,13 @@
           localStorage.setItem('dsh_user_info', JSON.stringify(data.user));
         }
 
-        showAlert(`✅ Đăng nhập thành công! Chào mừng <strong>${data.user.username}</strong> (${data.user.role.toUpperCase()}). Đang mở không gian làm việc...`, 'success');
+        showAlert(`✅ Đăng nhập thành công! Chào mừng <strong>${data.user.username}</strong> (${data.user.role.toUpperCase()}). Đang mở không gian làm việc DSH...`, 'success');
         btn.textContent = 'Đang điều hướng...';
 
         setTimeout(() => {
-          if (data.user.role === 'admin') {
-            window.location.href = '/admin';
-          } else {
-            window.location.href = '/';
-          }
-        }, 1200);
+          // Phase 5: KHÔNG còn dashboard admin riêng — cả user lẫn admin vào thẳng màn hình DSH.
+          window.location.href = data.redirectUrl || '/';
+        }, 800);
 
       } catch (err) {
         showAlert('Lỗi kết nối tới máy chủ: ' + err.message);

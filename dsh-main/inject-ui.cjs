@@ -6,22 +6,10 @@ const path = require('path');
 
 const targetIndex = '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/index.html';
 
-if (!fs.existsSync(targetIndex)) {
-  console.log('[inject-ui] Target index.html not found, skipping injection.');
-  process.exit(0);
-}
-
-try {
-  let html = fs.readFileSync(targetIndex, 'utf8');
-
-  // Clean up any prior injection block for clean idempotent update
-  if (html.includes('<!-- DSH USER ENTERPRISE UI INJECTION -->')) {
-    html = html.replace(/<!-- DSH USER ENTERPRISE UI INJECTION -->[\s\S]*?<!-- END DSH USER ENTERPRISE UI INJECTION -->/g, '');
-  }
-
-  const username = process.env.DSH_USER_NAME || 'User';
-  const role = process.env.DSH_USER_ROLE || 'user';
-  const isAdmin = (role === 'admin' || username.toLowerCase() === 'admin');
+function renderEnterpriseUiMarkup(opts = {}) {
+  const username = opts.username || process.env.DSH_USER_NAME || 'User';
+  const role = opts.role || process.env.DSH_USER_ROLE || 'user';
+  const isAdmin = (String(role).toLowerCase() === 'admin' || String(username).toLowerCase() === 'admin');
 
   const markup = `
 <!-- DSH USER ENTERPRISE UI INJECTION -->
@@ -331,11 +319,6 @@ try {
       </div>
 
       <div class="dsh-modal-actions">
-        ${isAdmin ? `
-          <a href="/admin" class="dsh-btn dsh-btn-admin">
-            🛡️ Trang Quản trị Admin
-          </a>
-        ` : ''}
         <button class="dsh-btn dsh-btn-logout" onclick="performDshLogout()">
           🚪 Đăng xuất (Logout)
         </button>
@@ -613,10 +596,27 @@ try {
 </script>
 <!-- END DSH USER ENTERPRISE UI INJECTION -->
 `;
-
-  html = html.replace('</body>', `${markup}\n</body>`);
-  fs.writeFileSync(targetIndex, html, 'utf8');
-  console.log(`[inject-ui] Successfully injected enterprise UI for user "${username}" (${role})`);
-} catch (e) {
-  console.error('[inject-ui] Error injecting UI:', e.message);
+  return markup;
 }
+
+function injectIntoHtml(html, opts = {}) {
+  let out = String(html || '');
+  if (out.includes('<!-- DSH USER ENTERPRISE UI INJECTION -->')) {
+    out = out.replace(/<!-- DSH USER ENTERPRISE UI INJECTION -->[\s\S]*?<!-- END DSH USER ENTERPRISE UI INJECTION -->/g, '');
+  }
+  const markup = renderEnterpriseUiMarkup(opts);
+  return out.includes('</body>') ? out.replace('</body>', `${markup}\n</body>`) : `${out}\n${markup}`;
+}
+
+module.exports = { renderEnterpriseUiMarkup, injectIntoHtml };
+
+if (require.main === module && fs.existsSync(targetIndex)) {
+  try {
+    const html = fs.readFileSync(targetIndex, 'utf8');
+    fs.writeFileSync(targetIndex, injectIntoHtml(html), 'utf8');
+    console.log('[inject-ui] Injected enterprise UI into static index.html.');
+  } catch (e) {
+    console.error('[inject-ui] Error injecting UI:', e.message);
+  }
+}
+

@@ -1,3 +1,17 @@
+// gateway/server.js
+// DSH Lite Enterprise Gateway (Phase 5) — the ONLY container publishing a port (12345).
+//
+// Responsibilities:
+//  - Auth: bcrypt/scrypt + JWT cookie dsh_user_token (HttpOnly, SameSite=Lax, 7 ngày).
+//  - SQLite WAL (users.db) in volume dsh-gateway-data via Sequelize (Users/Sessions/UserSessions/Attachments).
+//  - Login redirect thẳng "/" (màn hình DSH của dsh-main). KHÔNG còn dashboard admin riêng,
+//    KHÔNG còn nút "Vào DeepSeek Harness", KHÔNG spawn container nào lúc login.
+//  - Mỗi request HTTP + WebSocket upgrade: verify JWT, STRIP mọi header X-DSH-* do client gửi lên,
+//    gắn lại X-DSH-User-Id / X-DSH-Username / X-DSH-Role từ DB, reverse-proxy sang dsh-main:3090.
+//  - Cổng nội bộ 3091 (không publish ra host): Exec Router /internal/exec cho dsh-main gọi vào,
+//    lazy-spawn tool container dsh-tool-<username> qua orchestrator.
+//  - Idle sweeper 15 phút + reconcile on boot cho tool containers. Chat thuần không giữ container.
+
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,28 +21,20 @@ import { signToken, verifyToken, authenticate, requireAdmin, extractToken } from
 import { masterKeyPool } from './key-pool.js';
 import { masterModelManager } from './model-manager.js';
 import {
-  spawnUserContainer,
-  startIdleSweeper,
-  stopIdleSweeper,
-  recordUserActivity,
-  cleanupStaleUserContainersOnBoot
+  reconcileOnBoot, startToolIdleSweeper, stopToolIdleSweeper, killToolContainer
 } from './orchestrator.js';
+import { createInternalHandler } from './exec-router.js';
 
-const PORT = parseInt(process.env.PORT || process.env.MASTER_PORT || '12345', 10);
+const PORT = parseInt(process.env.PORT || '12345', 10);
+const INTERNAL_PORT = parseInt(process.env.INTERNAL_PORT || '3091', 10);
 const PUBLIC_DIR = path.resolve(import.meta.dirname, 'public');
 
-export function getProxyTarget(containerInfo) {
-  const isInsideDocker = fs.existsSync('/.dockerenv') || process.env.DOCKER_CONTAINER === 'true';
-  if (isInsideDocker) {
-    if (containerInfo.name) {
-      return `http://${containerInfo.name}:${containerInfo.internalPort || 3090}`;
-    }
-    if (containerInfo.ip && containerInfo.ip !== '127.0.0.1') {
-      return `http://${containerInfo.ip}:${containerInfo.internalPort || 3090}`;
-    }
-    return `http://host.docker.internal:${containerInfo.port || 3090}`;
-  }
-  return `http://127.0.0.1:${containerInfo.port || 3090}`;
+function getDshMainUrl() {
+  return process.env.DSH_MAIN_URL || 'http://dsh-main:3090';
+}
+
+function getInternalToken() {
+  return process.env.INTERNAL_TOKEN || '';
 }
 
 export function parseJsonBody(req) {
@@ -64,24 +70,53 @@ export function sendJson(res, statusCode, data, headers = {}) {
   res.end(JSON.stringify(data));
 }
 
-export function createMasterServer() {
-  const proxy = httpProxy.createProxyServer({
-    ws: true,
-    changeOrigin: true,
-    autoRewrite: true,
-    xfwd: true
-  });
+/**
+ * Trust-boundary header rewrite: remove EVERY client-supplied X-DSH-* header,
+ * then inject the identity resolved from the verified JWT + SQLite DB.
+ * This is the single place identity crosses into dsh-main; a forged
+ * X-DSH-Role from the browser can therefore never survive (acceptance #10).
+ */
+export function stampTrustedHeaders(req, user) {
+  for (const key of Object.keys(req.headers)) {
+    if (key.startsWith('x-dsh-')) delete req.headers[key];
+  }
+  req.headers['x-dsh-user-id'] = String(user.id);
+  req.headers['x-dsh-username'] = String(user.username);
+  req.headers['x-dsh-role'] = String(user.role);
+  req.headers['x-forwarded-host'] = req.headers['host'] || 'localhost';
+  return req.headers;
+}
 
+async function resolveUser(req) {
+  const token = extractToken(req);
+  if (!token) return null;
+  const decoded = verifyToken(token);
+  if (!decoded) return null;
+  const user = await User.findByPk(decoded.id);
+  if (!user || user.status !== 'active') return null;
+  return user;
+}
+
+function serveStatic(res, filePath, method) {
+  if (!fs.existsSync(filePath)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Not found');
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  if (method === 'HEAD') return res.end();
+  return res.end(fs.readFileSync(filePath, 'utf8'));
+}
+
+export function createGatewayServer() {
+  const proxy = httpProxy.createProxyServer({ ws: true, changeOrigin: true, xfwd: false });
   proxy.on('error', (err, req, res) => {
-    console.error('[Main Gateway Proxy Error]:', err.message);
+    console.error('[Gateway Proxy Error]:', err.message);
     if (res && res.writeHead && !res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'Sandbox Container unreachable or starting up...', detail: err.message }));
+      sendJson(res, 502, { error: 'dsh-main unreachable', detail: err.message });
     }
   });
 
   const server = http.createServer(async (req, res) => {
-    // CORS Preflight
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
@@ -98,79 +133,21 @@ export function createMasterServer() {
       // 1. Healthcheck
       if (pathname === '/health' && req.method === 'GET') {
         return sendJson(res, 200, {
-          service: 'dsh-main-gateway',
+          service: 'dsh-gateway',
           status: 'healthy',
           port: PORT,
+          internalPort: INTERNAL_PORT,
+          dshMain: getDshMainUrl(),
           timestamp: new Date().toISOString()
         });
       }
 
-      // 1.1 Gateway Route Resolver for helper / status checks
-      if (pathname === '/api/gateway/resolve-route' && (req.method === 'GET' || req.method === 'HEAD')) {
-        const token = extractToken(req);
-        if (!token) {
-          return sendJson(res, 401, { error: 'No authentication token provided' });
-        }
-
-        const decoded = verifyToken(token);
-        if (!decoded) {
-          return sendJson(res, 401, { error: 'Invalid or expired token' });
-        }
-
-        const user = await User.findByPk(decoded.id);
-        if (!user || user.status !== 'active') {
-          return sendJson(res, 401, { error: 'User is not active or banned' });
-        }
-
-        // Auto-spawn or get dedicated container for active user
-        try {
-          const containerInfo = await spawnUserContainer(user.id, user.username, user.role);
-          recordUserActivity(user.id);
-
-          return sendJson(res, 200, {
-            status: 'resolved',
-            userId: user.id,
-            username: user.username,
-            ip: containerInfo.ip,
-            port: containerInfo.internalPort || 3090,
-            hostPort: containerInfo.port
-          }, {
-            'X-Target-IP': containerInfo.ip || '127.0.0.1',
-            'X-Target-Port': String(containerInfo.internalPort || 3090),
-            'X-User-Id': String(user.id),
-            'X-User-Name': String(user.username)
-          });
-        } catch (err) {
-          console.error('[Gateway Resolver] Error resolving container:', err.message);
-          return sendJson(res, 502, { error: `Failed to resolve user container: ${err.message}` });
-        }
-      }
-
-      // 2. Serve Login / Register Page (GET /login or GET /login.html)
+      // 2. Login page (public)
       if ((pathname === '/login' || pathname === '/login.html') && (req.method === 'GET' || req.method === 'HEAD')) {
-        const filePath = path.join(PUBLIC_DIR, 'login.html');
-        if (fs.existsSync(filePath)) {
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          if (req.method === 'HEAD') return res.end();
-          return res.end(fs.readFileSync(filePath, 'utf8'));
-        }
-        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        return res.end('Login page not found');
+        return serveStatic(res, path.join(PUBLIC_DIR, 'login.html'), req.method);
       }
 
-      // 2.1 Serve Admin Dashboard (GET /admin or GET /admin.html)
-      if ((pathname === '/admin' || pathname === '/admin.html') && (req.method === 'GET' || req.method === 'HEAD')) {
-        const filePath = path.join(PUBLIC_DIR, 'admin.html');
-        if (fs.existsSync(filePath)) {
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          if (req.method === 'HEAD') return res.end();
-          return res.end(fs.readFileSync(filePath, 'utf8'));
-        }
-        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        return res.end('Admin page not found');
-      }
-
-      // 3. User Registration (Public API)
+      // 3. Register (public; requires admin approval)
       if (pathname === '/api/auth/register' && req.method === 'POST') {
         const { username, password } = await parseJsonBody(req);
         if (!username || !password) {
@@ -185,115 +162,62 @@ export function createMasterServer() {
         if (password.length < 6) {
           return sendJson(res, 400, { error: 'Mật khẩu phải có ít nhất 6 ký tự.' });
         }
-
         const existing = await User.findOne({ where: { username } });
         if (existing) {
           return sendJson(res, 409, { error: 'Tên người dùng đã tồn tại.' });
         }
-
         const newUser = await User.create({
           username,
           password_hash: hashPassword(password),
           role: 'user',
-          status: 'pending',
-          workspace_path: `/data/workspaces/${username}`
+          status: 'pending'
         });
-
         return sendJson(res, 201, {
           message: 'Đăng ký thành công! Vui lòng chờ Quản trị viên (Admin) phê duyệt.',
-          user: {
-            id: newUser.id,
-            username: newUser.username,
-            role: newUser.role,
-            status: newUser.status
-          }
+          user: { id: newUser.id, username: newUser.username, role: newUser.role, status: newUser.status }
         });
       }
 
-      // 4. User Login (Public API - Triggers container spawn on success)
+      // 4. Login: JWT + cookie, NO container spawn, client redirects to "/" (the DSH screen)
       if (pathname === '/api/auth/login' && req.method === 'POST') {
         const { username, password } = await parseJsonBody(req);
         if (!username || !password) {
           return sendJson(res, 400, { error: 'Username và password là bắt buộc.' });
         }
-
         const user = await User.findOne({ where: { username } });
         if (!user || !user.checkPassword(password)) {
           return sendJson(res, 401, { error: 'Tài khoản hoặc mật khẩu không chính xác.' });
         }
-
-        // Check account status
         if (user.status === 'pending') {
-          return sendJson(res, 403, {
-            error: 'Tài khoản của bạn đang chờ Admin phê duyệt. Vui lòng liên hệ Admin!',
-            status: 'pending'
-          });
+          return sendJson(res, 403, { error: 'Tài khoản của bạn đang chờ Admin phê duyệt. Vui lòng liên hệ Admin!', status: 'pending' });
         }
-
         if (user.status === 'rejected' || user.status === 'banned') {
-          return sendJson(res, 403, {
-            error: 'Tài khoản của bạn đã bị từ chối hoặc vô hiệu hóa!',
-            status: user.status
-          });
+          return sendJson(res, 403, { error: 'Tài khoản của bạn đã bị từ chối hoặc vô hiệu hóa!', status: user.status });
         }
-
-        // Issue JWT token
-        const token = signToken({
-          id: user.id,
-          username: user.username,
-          role: user.role
-        });
-
-        // Record session in PostgreSQL
+        const token = signToken({ id: user.id, username: user.username, role: user.role });
         const expiresAt = Date.now() + 7 * 24 * 3600 * 1000;
-        await Session.create({
-          token,
-          user_id: user.id,
-          expires_at: expiresAt
-        }).catch(() => {});
-
+        await Session.create({ token, user_id: user.id, expires_at: expiresAt }).catch(() => {});
         const cookie = `dsh_user_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 3600}`;
-
-        // Docker Orchestration: Spawn dedicated container for user
-        let containerInfo = null;
-        try {
-          containerInfo = await spawnUserContainer(user.id, user.username, user.role);
-          console.log(`[Master Backend] Spawned container for user ${user.username}: ${containerInfo.name} on port ${containerInfo.port}`);
-        } catch (err) {
-          console.error(`[Master Backend] Container spawn error for ${user.username}:`, err.message);
-        }
-
         return sendJson(res, 200, {
           message: 'Đăng nhập thành công',
           token,
-          user: {
-            id: user.id,
-            username: user.username,
-            role: user.role,
-            status: user.status,
-            workspace_path: user.workspace_path
-          },
-          container: containerInfo
-        }, {
-          'Set-Cookie': cookie
-        });
+          redirectUrl: '/',
+          user: { id: user.id, username: user.username, role: user.role, status: user.status }
+        }, { 'Set-Cookie': cookie });
       }
 
-      // 5. User Profile (Protected)
+      // 5. Profile (protected)
       if (pathname === '/api/auth/me' && req.method === 'GET') {
         return authenticate(req, res, async () => {
-          recordUserActivity(req.user.id);
           const user = await User.findByPk(req.user.id, {
-            attributes: ['id', 'username', 'role', 'status', 'workspace_path', 'token_quota', 'tokens_used', 'createdAt']
+            attributes: ['id', 'username', 'role', 'status', 'token_quota', 'tokens_used', 'createdAt']
           });
-          if (!user) {
-            return sendJson(res, 404, { error: 'Không tìm thấy thông tin người dùng.' });
-          }
+          if (!user) return sendJson(res, 404, { error: 'Không tìm thấy thông tin người dùng.' });
           return sendJson(res, 200, { authenticated: true, user });
         });
       }
 
-      // 5.0 Change Password (Protected)
+      // 5.1 Change password (protected)
       if (pathname === '/api/auth/change-password' && req.method === 'POST') {
         return authenticate(req, res, async () => {
           const { oldPassword, newPassword } = await parseJsonBody(req);
@@ -306,122 +230,46 @@ export function createMasterServer() {
           if (oldPassword === newPassword) {
             return sendJson(res, 400, { error: 'Mật khẩu mới không được trùng với mật khẩu cũ.' });
           }
-
           const user = await User.findByPk(req.user.id);
-          if (!user) {
-            return sendJson(res, 404, { error: 'Không tìm thấy thông tin tài khoản người dùng.' });
-          }
-
-          if (!user.checkPassword(oldPassword)) {
-            return sendJson(res, 401, { error: 'Mật khẩu hiện tại không chính xác.' });
-          }
-
+          if (!user) return sendJson(res, 404, { error: 'Không tìm thấy thông tin tài khoản người dùng.' });
+          if (!user.checkPassword(oldPassword)) return sendJson(res, 401, { error: 'Mật khẩu hiện tại không chính xác.' });
           user.password_hash = hashPassword(newPassword);
           await user.save();
-
-          console.log(`[Master Backend] User ${user.username} (ID: ${user.id}) changed password successfully.`);
-          return sendJson(res, 200, {
-            success: true,
-            message: 'Đổi mật khẩu thành công! Mật khẩu mới đã được cập nhật.'
-          });
+          return sendJson(res, 200, { success: true, message: 'Đổi mật khẩu thành công! Mật khẩu mới đã được cập nhật.' });
         });
       }
 
-      // 5.1 Get Container Launch URL (Direct Navigation into DSH)
-      if (pathname === '/api/auth/launch' && req.method === 'GET') {
-        return authenticate(req, res, async () => {
-          try {
-            const containerInfo = await spawnUserContainer(req.user.id, req.user.username, req.user.role);
-            return sendJson(res, 200, {
-              success: true,
-              launchUrl: containerInfo.launchUrl,
-              container: containerInfo
-            });
-          } catch (err) {
-            return sendJson(res, 500, { error: err.message });
-          }
-        });
-      }
-
-      // 5.2 Smart Gateway Redirect:
-      // If user is unauthenticated -> 302 /login
-      // If user is authenticated -> get container launch token -> 302 /?token=${launchToken}
+      // 5.2 Smart redirect: unauthenticated -> /login; authenticated -> "/" (DSH screen via dsh-main)
       if (pathname === '/api/auth/smart-redirect' && req.method === 'GET') {
-        const token = extractToken(req);
-        if (!token) {
-          res.writeHead(302, { 'Location': '/login' });
-          return res.end();
-        }
-        const decoded = verifyToken(token);
-        if (!decoded) {
-          res.writeHead(302, { 'Location': '/login' });
-          return res.end();
-        }
-        const user = await User.findByPk(decoded.id);
-        if (!user || user.status !== 'active') {
-          res.writeHead(302, { 'Location': '/login' });
-          return res.end();
-        }
-
-        try {
-          const containerInfo = await spawnUserContainer(user.id, user.username, user.role);
-          if (containerInfo.launchToken) {
-            res.writeHead(302, { 'Location': `/?token=${containerInfo.launchToken}` });
-            return res.end();
-          }
-          res.writeHead(302, { 'Location': '/' });
-          return res.end();
-        } catch (e) {
-          res.writeHead(302, { 'Location': '/login' });
-          return res.end();
-        }
+        const user = await resolveUser(req);
+        res.writeHead(302, { Location: user ? '/' : '/login' });
+        return res.end();
       }
 
-      // 6. User Sandbox Container Info (Protected)
-      if (pathname === '/api/containers/my-container' && req.method === 'GET') {
-        return authenticate(req, res, async () => {
-          recordUserActivity(req.user.id);
-          try {
-            const containerInfo = await spawnUserContainer(req.user.id, req.user.username);
-            return sendJson(res, 200, {
-              success: true,
-              container: containerInfo
-            });
-          } catch (err) {
-            return sendJson(res, 500, {
-              success: false,
-              error: `Lỗi khởi tạo container sandbox: ${err.message}`
-            });
-          }
-        });
-      }
-
-      // 7. Logout
+      // 6. Logout
       if (pathname === '/api/auth/logout' && req.method === 'POST') {
         const token = extractToken(req);
-        if (token) {
-          await Session.destroy({ where: { token } }).catch(() => {});
-        }
-        const expireCookie = 'dsh_user_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
+        if (token) await Session.destroy({ where: { token } }).catch(() => {});
+        const expireCookie = 'dsh_user_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:01 GMT';
         return sendJson(res, 200, { success: true, message: 'Đăng xuất thành công.' }, { 'Set-Cookie': expireCookie });
       }
 
       // ==========================================
-      // ADMIN APIS (Requires Admin RBAC)
+      // ADMIN APIS (requires Admin RBAC) — user lifecycle & model/key management.
+      // The old standalone /admin dashboard page is retired (Phase 5): the admin
+      // manages users & models through the DSH screen and these JSON APIs.
       // ==========================================
 
-      // 8. List All Users
       if (pathname === '/api/admin/users' && req.method === 'GET') {
         return requireAdmin(req, res, async () => {
           const users = await User.findAll({
-            attributes: ['id', 'username', 'role', 'status', 'workspace_path', 'createdAt'],
+            attributes: ['id', 'username', 'role', 'status', 'createdAt'],
             order: [['id', 'ASC']]
           });
           return sendJson(res, 200, { total: users.length, users });
         });
       }
 
-      // 9. List Pending Users
       if (pathname === '/api/admin/pending-users' && req.method === 'GET') {
         return requireAdmin(req, res, async () => {
           const pendingUsers = await User.findAll({
@@ -433,30 +281,18 @@ export function createMasterServer() {
         });
       }
 
-      // 10. Approve User (Pending -> Active)
       if (pathname === '/api/admin/approve-user' && req.method === 'POST') {
         return requireAdmin(req, res, async () => {
           const { username } = await parseJsonBody(req);
-          if (!username) {
-            return sendJson(res, 400, { error: 'Username là bắt buộc.' });
-          }
-
+          if (!username) return sendJson(res, 400, { error: 'Username là bắt buộc.' });
           const user = await User.findOne({ where: { username } });
-          if (!user) {
-            return sendJson(res, 404, { error: `Không tìm thấy người dùng "${username}".` });
-          }
-
+          if (!user) return sendJson(res, 404, { error: `Không tìm thấy người dùng "${username}".` });
           user.status = 'active';
           await user.save();
-
-          return sendJson(res, 200, {
-            message: `Đã phê duyệt thành công tài khoản "${username}"!`,
-            user: { id: user.id, username: user.username, role: user.role, status: user.status }
-          });
+          return sendJson(res, 200, { message: `Đã phê duyệt tài khoản "${username}"!`, user: { id: user.id, username: user.username, role: user.role, status: user.status } });
         });
       }
 
-      // 10.1 RESTful Update User Status (PUT /api/admin/users/:id/status)
       const userStatusMatch = pathname.match(/^\/api\/admin\/users\/(\d+)\/status$/);
       if (userStatusMatch && (req.method === 'PUT' || req.method === 'POST')) {
         return requireAdmin(req, res, async () => {
@@ -468,141 +304,80 @@ export function createMasterServer() {
           await user.save();
           if (status === 'banned' || status === 'rejected') {
             await Session.destroy({ where: { user_id: user.id } });
-            await killUserContainer(user.id);
+            await killToolContainer(user.id).catch(() => {});
           }
-          return sendJson(res, 200, {
-            message: `Đã cập nhật trạng thái người dùng #${targetId} thành ${status}!`,
-            user: { id: user.id, username: user.username, role: user.role, status: user.status }
-          });
+          return sendJson(res, 200, { message: `Đã cập nhật trạng thái #${targetId} thành ${status}!`, user: { id: user.id, username: user.username, role: user.role, status: user.status } });
         });
       }
 
-      // 11. Reject User
       if (pathname === '/api/admin/reject-user' && req.method === 'POST') {
         return requireAdmin(req, res, async () => {
           const { username } = await parseJsonBody(req);
-          if (!username) {
-            return sendJson(res, 400, { error: 'Username là bắt buộc.' });
-          }
-
+          if (!username) return sendJson(res, 400, { error: 'Username là bắt buộc.' });
           const user = await User.findOne({ where: { username } });
-          if (!user) {
-            return sendJson(res, 404, { error: `Không tìm thấy người dùng "${username}".` });
-          }
-
+          if (!user) return sendJson(res, 404, { error: `Không tìm thấy người dùng "${username}".` });
           user.status = 'rejected';
           await user.save();
-
-          // Revoke active sessions & kill container if any
           await Session.destroy({ where: { user_id: user.id } });
-          await killUserContainer(user.id);
-
-          return sendJson(res, 200, {
-            message: `Đã từ chối tài khoản "${username}".`,
-            user: { id: user.id, username: user.username, role: user.role, status: user.status }
-          });
+          await killToolContainer(user.id).catch(() => {});
+          return sendJson(res, 200, { message: `Đã từ chối tài khoản "${username}".`, user: { id: user.id, username: user.username, role: user.role, status: user.status } });
         });
       }
 
-      // 12. Admin Model Configs & API Keys
+      // Admin model & key configuration APIs (persisted under /data/gateway volume)
       if (pathname === '/api/admin/models' && req.method === 'GET') {
         return requireAdmin(req, res, async () => {
           const models = masterModelManager.getAllModels();
-          return sendJson(res, 200, {
-            success: true,
-            total: models.length,
-            models
-          });
+          return sendJson(res, 200, { success: true, total: models.length, models });
         });
       }
-
       if (pathname === '/api/admin/models' && req.method === 'POST') {
         return requireAdmin(req, res, async () => {
           const body = await parseJsonBody(req);
-          if (!body.id || !body.name) {
-            return sendJson(res, 400, { error: 'Model ID và Tên hiển thị là bắt buộc.' });
-          }
+          if (!body.id || !body.name) return sendJson(res, 400, { error: 'Model ID và Tên hiển thị là bắt buộc.' });
           const saved = masterModelManager.addOrUpdateModel(body);
-          return sendJson(res, 200, {
-            success: true,
-            message: `Đã lưu cấu hình Model "${saved.name}" thành công!`,
-            model: saved
-          });
+          return sendJson(res, 200, { success: true, message: `Đã lưu cấu hình Model "${saved.name}"!`, model: saved });
         });
       }
-
       const modelStatusMatch = pathname.match(/^\/api\/admin\/models\/(.+)\/status$/);
       if (modelStatusMatch && (req.method === 'PUT' || req.method === 'POST')) {
         return requireAdmin(req, res, async () => {
-          const modelId = decodeURIComponent(modelStatusMatch[1]);
-          const { enabled } = await parseJsonBody(req);
-          const updated = masterModelManager.toggleModelStatus(modelId, enabled);
+          const updated = masterModelManager.toggleModelStatus(decodeURIComponent(modelStatusMatch[1]), (await parseJsonBody(req)).enabled);
           if (!updated) return sendJson(res, 404, { error: 'Không tìm thấy Model.' });
-          return sendJson(res, 200, {
-            success: true,
-            message: `Đã ${updated.enabled ? 'bật' : 'tắt'} Model ${modelId}`,
-            model: updated
-          });
+          return sendJson(res, 200, { success: true, message: `Đã ${updated.enabled ? 'bật' : 'tắt'} Model`, model: updated });
         });
       }
-
       const modelScopeMatch = pathname.match(/^\/api\/admin\/models\/(.+)\/scope$/);
       if (modelScopeMatch && (req.method === 'PUT' || req.method === 'POST')) {
         return requireAdmin(req, res, async () => {
-          const modelId = decodeURIComponent(modelScopeMatch[1]);
-          const { scope } = await parseJsonBody(req);
-          const updated = masterModelManager.setModelScope(modelId, scope);
+          const updated = masterModelManager.setModelScope(decodeURIComponent(modelScopeMatch[1]), (await parseJsonBody(req)).scope);
           if (!updated) return sendJson(res, 404, { error: 'Không tìm thấy Model.' });
-          return sendJson(res, 200, {
-            success: true,
-            message: `Đã phân quyền Model "${modelId}" sang ${updated.scope === 'admin_only' ? 'Chỉ Admin' : 'Tất cả User'}`,
-            model: updated
-          });
+          return sendJson(res, 200, { success: true, message: 'Đã cập nhật scope.', model: updated });
         });
       }
-
       const modelDeleteMatch = pathname.match(/^\/api\/admin\/models\/([^/]+)$/);
       if (modelDeleteMatch && req.method === 'DELETE') {
         return requireAdmin(req, res, async () => {
-          const modelId = decodeURIComponent(modelDeleteMatch[1]);
-          const deleted = masterModelManager.deleteModel(modelId);
+          const deleted = masterModelManager.deleteModel(decodeURIComponent(modelDeleteMatch[1]));
           if (!deleted) return sendJson(res, 404, { error: 'Không tìm thấy Model để xóa.' });
-          return sendJson(res, 200, { success: true, message: 'Đã xóa Model thành công.' });
+          return sendJson(res, 200, { success: true, message: 'Đã xóa Model.' });
         });
       }
-
       if (pathname === '/api/admin/models/config' && req.method === 'GET') {
-        return requireAdmin(req, res, async () => {
-          const pools = masterKeyPool.getMaskedPools();
-          return sendJson(res, 200, { success: true, pools });
-        });
+        return requireAdmin(req, res, async () => sendJson(res, 200, { success: true, pools: masterKeyPool.getMaskedPools() }));
       }
-
       if (pathname === '/api/admin/models/key' && req.method === 'POST') {
         return requireAdmin(req, res, async () => {
           const { ref, value, mode } = await parseJsonBody(req);
-          if (!ref || !value) {
-            return sendJson(res, 400, { error: 'ref và value là bắt buộc.' });
-          }
-
-          let result;
-          if (mode === 'append') {
-            result = masterKeyPool.addKeys(ref, value);
-          } else {
-            result = masterKeyPool.setKeys(ref, value);
-          }
-
-          return sendJson(res, 200, {
-            success: true,
-            message: `Đã cấu hình API Key thành công cho ${ref}`,
-            result
-          });
+          if (!ref || !value) return sendJson(res, 400, { error: 'ref và value là bắt buộc.' });
+          const result = mode === 'append' ? masterKeyPool.addKeys(ref, value) : masterKeyPool.setKeys(ref, value);
+          return sendJson(res, 200, { success: true, message: `Đã cấu hình API Key cho ${ref}`, result });
         });
       }
 
-      // 7. Dynamic User Sandbox Reverse Proxy (Handles all other routes, workspace & assets)
-      const token = extractToken(req);
-      if (!token) {
+      // 7. Default: reverse proxy to the SHARED dsh-main brain (no container spawn here!)
+      const user = await resolveUser(req);
+      if (!user) {
         const accept = req.headers['accept'] || '';
         if (accept.includes('text/html') || pathname === '/') {
           res.writeHead(302, { Location: '/login' });
@@ -611,114 +386,71 @@ export function createMasterServer() {
         return sendJson(res, 401, { error: 'Unauthorized: Vui lòng đăng nhập.' });
       }
 
-      const decoded = verifyToken(token);
-      if (!decoded) {
-        const accept = req.headers['accept'] || '';
-        if (accept.includes('text/html') || pathname === '/') {
-          res.writeHead(302, {
-            'Set-Cookie': 'dsh_user_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-            Location: '/login'
-          });
-          return res.end();
-        }
-        return sendJson(res, 401, { error: 'Unauthorized: Token không hợp lệ hoặc đã hết hạn.' });
-      }
-
-      const user = await User.findByPk(decoded.id);
-      if (!user || user.status !== 'active') {
-        return sendJson(res, 403, { error: 'Tài khoản không hoạt động hoặc đã bị vô hiệu hóa.' });
-      }
-
-      // Record activity and ensure container is running
-      recordUserActivity(user.id);
-      let containerInfo;
-      try {
-        containerInfo = await spawnUserContainer(user.id, user.username, user.role);
-      } catch (err) {
-        console.error(`[Main Gateway] Error spawning container for ${user.username}:`, err.message);
-        return sendJson(res, 502, { error: `Không thể khởi động User Sandbox: ${err.message}` });
-      }
-
-      const target = getProxyTarget(containerInfo);
-
-      // Forward user details
-      req.headers['x-forwarded-host'] = req.headers['host'];
-      req.headers['x-user-id'] = String(user.id);
-      req.headers['x-user-name'] = String(user.username);
-      req.headers['x-user-role'] = String(user.role);
-
-      return proxy.web(req, res, { target }, (err) => {
-        console.error(`[Proxy Web Error for ${user.username}]:`, err.message);
-        if (!res.headersSent) {
-          sendJson(res, 502, { error: `User Sandbox chưa sẵn sàng. Vui lòng thử lại sau vài giây (${err.message})` });
-        }
-      });
+      stampTrustedHeaders(req, user);
+      return proxy.web(req, res, { target: getDshMainUrl() });
     } catch (err) {
-      console.error('[Master Backend] Error:', err);
+      console.error('[Gateway] Error:', err);
       return sendJson(res, 500, { error: err.message || 'Lỗi hệ thống nội bộ.' });
     }
   });
 
-  // Handle WebSocket upgrades for real-time DSH communication
+  // WebSocket upgrades: same trust boundary as HTTP.
   server.on('upgrade', async (req, socket, head) => {
     try {
-      const token = extractToken(req);
-      if (!token) {
+      const user = await resolveUser(req);
+      if (!user) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-        socket.destroy();
-        return;
+        return socket.destroy();
       }
-      const decoded = verifyToken(token);
-      if (!decoded) {
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-        socket.destroy();
-        return;
-      }
-      const user = await User.findByPk(decoded.id);
-      if (!user || user.status !== 'active') {
-        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-        socket.destroy();
-        return;
-      }
-
-      recordUserActivity(user.id);
-      const containerInfo = await spawnUserContainer(user.id, user.username, user.role);
-      const target = getProxyTarget(containerInfo);
-
-      req.headers['x-forwarded-host'] = req.headers['host'];
-      req.headers['x-user-id'] = String(user.id);
-      req.headers['x-user-name'] = String(user.username);
-      req.headers['x-user-role'] = String(user.role);
-
-      proxy.ws(req, socket, head, { target }, (err) => {
-        console.error(`[WebSocket Proxy Error for ${user.username}]:`, err.message);
-        try { socket.destroy(); } catch {}
-      });
+      stampTrustedHeaders(req, user);
+      proxy.ws(req, socket, head, { target: getDshMainUrl() });
     } catch (err) {
-      console.error('[WebSocket Upgrade Error]:', err.message);
-      try {
-        socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
-        socket.destroy();
-      } catch {}
+      console.error('[Gateway WS Upgrade Error]:', err.message);
+      try { socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n'); socket.destroy(); } catch {}
     }
   });
 
   return server;
 }
 
+/** Internal exec surface (:3091) — docker network only, never published to the host. */
+export function createInternalServer() {
+  const handler = createInternalHandler({
+    internalToken: getInternalToken(),
+    lookupUser: async (id) => {
+      const user = await User.findByPk(id);
+      if (!user) return null;
+      return { id: user.id, username: user.username, role: user.role, status: user.status };
+    }
+  });
+  return http.createServer((req, res) => { handler(req, res).catch((e) => sendJson(res, 500, { ok: false, error: e.message })); });
+}
+
 export async function startMasterServer(port = PORT) {
   await initDatabase();
-  await cleanupStaleUserContainersOnBoot();
-  startIdleSweeper(60000, 30); // Background idle container check every 1 minute
-  const server = createMasterServer();
+  const reconciled = await reconcileOnBoot();
+  console.log(`[Gateway] Reconciled ${reconciled} running tool container(s) on boot.`);
+  startToolIdleSweeper(60000);
+
+  const internalServer = createInternalServer();
+  const server = createGatewayServer();
+
+  await new Promise((resolve, reject) => {
+    internalServer.on('error', reject);
+    internalServer.listen(INTERNAL_PORT, '0.0.0.0', resolve);
+  });
+  console.log(`[Gateway] Internal exec surface on :${INTERNAL_PORT} (docker network only, token-authenticated)`);
+
   return new Promise((resolve, reject) => {
     server.on('error', (err) => {
-      console.error(`[Master Backend] Lỗi server tại port ${port}:`, err.message);
+      console.error(`[Gateway] Lỗi server tại port ${port}:`, err.message);
       reject(err);
     });
     server.listen(port, () => {
-      console.log(`[Main Gateway] Service đang hoạt động tại cổng ${port}`);
+      console.log(`[Gateway] Serving on :${port} -> proxy ${getDshMainUrl()}`);
       resolve(server);
     });
   });
 }
+
+export { stopToolIdleSweeper };

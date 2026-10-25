@@ -2,62 +2,62 @@
   "role": "admin",
   "version": "1.0.0",
   "toolsDir": "/opt/dsh-tool/tools/admin",
-  "allowedRoots": ["/data/workspace", "/data/all_users_ro"],
+  "allowedRoots": ["/data", "/data/all_users_ro"],
   "tools": {
     "bash": {
       "module": "shell.js",
       "handler": "runBash",
-      "description": "Execute shell commands in admin workspace or read-only inspect /data/all_users_ro"
+      "description": "Execute shell commands in /data/admin/<ws> or read-only inspect /data/all_users_ro"
     },
     "read_file": {
       "module": "fs.js",
       "handler": "readFile",
-      "description": "Read file in admin workspace or /data/all_users_ro (read-only)"
+      "description": "Read file in /data/admin/<ws> or /data/all_users_ro (read-only)"
     },
     "write_file": {
       "module": "fs.js",
       "handler": "writeFile",
-      "description": "Write file into /data/workspace/admin/<ws>/files/<category>/<file>"
+      "description": "Write file into /data/admin/<ws>/files/<category>/<file>"
     },
     "edit_file": {
       "module": "fs.js",
       "handler": "editFile",
-      "description": "Edit file in admin workspace"
+      "description": "Edit file in /data/admin/<ws>"
     },
     "list_dir": {
       "module": "fs.js",
       "handler": "listDir",
-      "description": "List directory entries in admin workspace or /data/all_users_ro"
+      "description": "List directory entries in /data/admin/<ws> or /data/all_users_ro"
     },
     "stat_file": {
       "module": "fs.js",
       "handler": "statFile",
-      "description": "Stat file or directory in admin workspace or /data/all_users_ro"
+      "description": "Stat file or directory in /data/admin/<ws> or /data/all_users_ro"
     },
     "read_bytes": {
       "module": "fs.js",
       "handler": "readBytes",
-      "description": "Read binary bytes from admin workspace or /data/all_users_ro"
+      "description": "Read binary bytes from /data/admin/<ws> or /data/all_users_ro"
     },
     "upload_file": {
       "module": "fs.js",
       "handler": "uploadFile",
-      "description": "Save uploaded file into /data/workspace/admin/<ws>/files/<category>/<file>"
+      "description": "Save uploaded file into /data/admin/<ws>/files/<category>/<file>"
     },
     "search_files": {
       "module": "fs.js",
       "handler": "searchFiles",
-      "description": "Search files in admin workspace or /data/all_users_ro"
+      "description": "Search files in /data/admin/<ws> or /data/all_users_ro"
     },
     "ensure_workspace": {
       "module": "fs.js",
       "handler": "ensureWorkspace",
-      "description": "Create or normalize workspace folder under /data/workspace/admin/<ws>"
+      "description": "Create or normalize workspace folder under /data/admin/<ws>"
     },
     "read_document": {
       "module": "doc-reader.js",
       "handler": "readDocument",
-      "description": "Extract text from .docx, .pdf, .txt in admin workspace or /data/all_users_ro"
+      "description": "Extract text from .docx, .pdf, .txt in /data/admin/<ws> or /data/all_users_ro"
     },
     "admin_list_user_workspaces": {
       "module": "audit.js",

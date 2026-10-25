@@ -1,6 +1,6 @@
 // dsh-tool/tools/common/auto-categorize.js
 // Enforces the mandatory directory layout:
-//   /data/workspace/<username>/<workspace-name>/files/<category>/<filename>
+//   /data/<username>/<workspace-name>/files/<category>/<filename>
 // Categories:
 //   - docs:   .doc, .docx, .txt, .md
 //   - pdf:    .pdf
@@ -34,13 +34,12 @@ export function sanitizeSegment(raw, fallback = 'default-workspace') {
     .trim();
 
   if (!cleaned || cleaned === '.' || cleaned === '..') return fallback;
-  // Forbidden redundant nested names like "workspace" if a real workspace name exists
   return cleaned;
 }
 
 /**
  * Normalize workspace name so redundant nesting like
- * `/data/workspace/alice/alice-space/workspace` never occurs.
+ * `/data/alice/alice-space/workspace` never occurs.
  */
 export function normalizeWorkspaceName(rawWorkspace, username = 'user') {
   const cleanUser = sanitizeSegment(username, 'user');
@@ -48,9 +47,10 @@ export function normalizeWorkspaceName(rawWorkspace, username = 'user') {
     return 'default-workspace';
   }
 
-  // Strip leading /data/workspace/<user>/ or /data/workspace/ if caller passed a full path
+  // Strip leading /data/workspace/<user>/ or /data/<user>/ if caller passed a full path
   let rel = rawWorkspace.replace(/\\/g, '/').trim();
   rel = rel.replace(/^\/+data\/+workspace\/+/i, '');
+  rel = rel.replace(/^\/+data\/+/i, '');
   if (rel.toLowerCase().startsWith(cleanUser.toLowerCase() + '/')) {
     rel = rel.slice(cleanUser.length + 1);
   }
@@ -66,6 +66,24 @@ export function normalizeWorkspaceName(rawWorkspace, username = 'user') {
 }
 
 /**
+ * Extract the workspace segment if `targetPath` is an absolute path under
+ * `/data/<username>/<ws>/...` (or legacy `/data/workspace/<username>/<ws>/...`).
+ */
+export function extractWorkspaceFromPath(targetPath, username = 'user') {
+  if (!targetPath || typeof targetPath !== 'string') return null;
+  const cleanUser = sanitizeSegment(username, 'user');
+  const norm = targetPath.replace(/\\/g, '/').trim().replace(/^\/+data\/+workspace\//i, '/data/');
+  const prefix = `/data/${cleanUser}/`;
+  if (norm.toLowerCase().startsWith(prefix.toLowerCase())) {
+    const rest = norm.slice(prefix.length).split('/').filter(Boolean);
+    if (rest.length >= 1 && rest[0].toLowerCase() !== 'files' && rest[0].toLowerCase() !== 'workspace') {
+      return sanitizeSegment(rest[0], 'default-workspace');
+    }
+  }
+  return null;
+}
+
+/**
  * Determine file category folder from filename extension.
  */
 export function categorizeFile(filename) {
@@ -78,18 +96,18 @@ export function categorizeFile(filename) {
 
 /**
  * Compute the canonical workspace root directory for a user:
- *   /data/workspace/<username>/<workspace-name>
+ *   /data/<username>/<workspace-name>
  */
-export function getUserWorkspaceDir(workspaceRoot, username, workspaceName) {
+export function getUserWorkspaceDir(workspaceRoot = '/data', username, workspaceName) {
   const cleanUser = sanitizeSegment(username, 'user');
   const cleanWs = normalizeWorkspaceName(workspaceName, cleanUser);
-  return path.posix.join(workspaceRoot.replace(/\\/g, '/'), cleanUser, cleanWs);
+  return path.posix.join((workspaceRoot || '/data').replace(/\\/g, '/'), cleanUser, cleanWs);
 }
 
 /**
  * Ensure the workspace directory and all 5 category subdirectories exist.
  */
-export function ensureWorkspaceStructure(workspaceRoot, username, workspaceName) {
+export function ensureWorkspaceStructure(workspaceRoot = '/data', username, workspaceName) {
   const wsDir = getUserWorkspaceDir(workspaceRoot, username, workspaceName);
   for (const cat of ALL_CATEGORIES) {
     const dir = path.posix.join(wsDir, 'files', cat);
@@ -100,10 +118,11 @@ export function ensureWorkspaceStructure(workspaceRoot, username, workspaceName)
 
 /**
  * Resolve any requested file path for creation/writing into the canonical structure:
- *   /data/workspace/<username>/<workspace-name>/files/<category>/<filename>
+ *   /data/<username>/<workspace-name>/files/<category>/<filename>
  */
-export function resolveCategorizedFilePath(workspaceRoot, username, workspaceName, requestedFilePath) {
-  const wsDir = ensureWorkspaceStructure(workspaceRoot, username, workspaceName);
+export function resolveCategorizedFilePath(workspaceRoot = '/data', username, workspaceName, requestedFilePath) {
+  const effectiveWs = extractWorkspaceFromPath(requestedFilePath, username) || workspaceName;
+  const wsDir = ensureWorkspaceStructure(workspaceRoot, username, effectiveWs);
   const rawName = path.basename(String(requestedFilePath || '').replace(/\\/g, '/'));
   const safeFilename = sanitizeSegment(rawName, 'unnamed-file');
   const category = categorizeFile(safeFilename);
@@ -112,10 +131,10 @@ export function resolveCategorizedFilePath(workspaceRoot, username, workspaceNam
 
 /**
  * Sweep a workspace directory after a shell command or tool run:
- * Any stray files created directly in `/data/workspace/<user>/<ws>` or in a nested `workspace/`
- * subfolder are automatically moved into `/data/workspace/<user>/<ws>/files/<category>/<file>`.
+ * Any stray files created directly in `/data/<user>/<ws>` or in a nested `workspace/`
+ * subfolder are automatically moved into `/data/<user>/<ws>/files/<category>/<file>`.
  */
-export function autoOrganizeWorkspaceStrayFiles(workspaceRoot, username, workspaceName) {
+export function autoOrganizeWorkspaceStrayFiles(workspaceRoot = '/data', username, workspaceName) {
   const wsDir = ensureWorkspaceStructure(workspaceRoot, username, workspaceName);
   const moved = [];
 
@@ -135,7 +154,6 @@ export function autoOrganizeWorkspaceStrayFiles(workspaceRoot, username, workspa
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (depth === 0 && entry.isDirectory() && entry.name === 'files') {
-        // Inside files/, check if files were placed directly under files/ without category
         for (const sub of fs.readdirSync(full, { withFileTypes: true })) {
           const subFull = path.join(full, sub.name);
           if (sub.isFile()) {
@@ -151,7 +169,6 @@ export function autoOrganizeWorkspaceStrayFiles(workspaceRoot, username, workspa
       if (entry.isFile()) {
         relocateFile(full);
       } else if (entry.isDirectory()) {
-        // Unwrap redundant nested directories (e.g. /data/workspace/alice/alice-space/workspace)
         scanDir(full, depth + 1);
         try {
           const remaining = fs.readdirSync(full);

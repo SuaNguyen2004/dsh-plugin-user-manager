@@ -1,7 +1,7 @@
 {
   "name": "dsh-user-container-plugin",
-  "version": "1.0.0",
-  "description": "Lightweight containerized DSH plugin for isolated single-user container",
+  "version": "2.0.0",
+  "description": "Shared Multi-Tenant DSH Core Plugin + Per-User Process Router (dsh-main)",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -13,8 +13,8 @@
     }
   },
   "dependencies": {
+    "http-proxy": "^1.18.1",
     "mammoth": "^1.13.0",
     "pdf-parse": "^2.4.5"
   }
 }
-

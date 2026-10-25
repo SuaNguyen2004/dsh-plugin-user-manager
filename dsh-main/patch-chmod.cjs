@@ -6,6 +6,7 @@ function getAllowedMountRoots() {
   const allowed = new Set();
   const dshHome = process.env.DSH_HOME || '/data/dsh_home';
   allowed.add(path.resolve(dshHome));
+  allowed.add(path.resolve('/data/dsh_homes'));
   allowed.add(path.resolve('/data/dsh_home'));
   allowed.add(path.resolve('/data/workspace'));
   return allowed;

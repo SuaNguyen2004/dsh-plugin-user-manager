@@ -3,7 +3,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { sanitizeSegment, normalizeWorkspaceName, getUserWorkspaceDir, ALL_CATEGORIES } from './auto-categorize.js';
+import {
+  sanitizeSegment,
+  extractWorkspaceFromPath,
+  getUserWorkspaceDir,
+  ALL_CATEGORIES
+} from './auto-categorize.js';
 
 export class PathGuardError extends Error {
   constructor(message, code = 'PATH_GUARD_DENIED') {
@@ -59,7 +64,6 @@ export function assertWithinRoot(allowedRoot, targetPath, mode = 'read') {
     throw new PathGuardError('Đường dẫn không hợp lệ.', 'INVALID_PATH');
   }
 
-  // Check raw lstat if the target itself exists and is a symlink
   const absCandidate = path.isAbsolute(targetPath)
     ? path.resolve(targetPath)
     : path.resolve(allowedRoot, targetPath);
@@ -71,7 +75,6 @@ export function assertWithinRoot(allowedRoot, targetPath, mode = 'read') {
     );
   }
 
-  // Also walk existing segments from allowedRoot down to absCandidate to ensure no symlink escapes
   const realRoot = resolveCanonicalPath(allowedRoot);
   if (!isPathInside(realRoot, absCandidate)) {
     throw new PathGuardError(
@@ -83,30 +86,48 @@ export function assertWithinRoot(allowedRoot, targetPath, mode = 'read') {
   return resolveCanonicalPath(absCandidate);
 }
 
+function normalizeLegacyWorkspacePrefix(rawPath, workspaceRoot) {
+  const normRoot = (workspaceRoot || '/data').replace(/\\/g, '/').replace(/\/+$/, '');
+  const raw = String(rawPath || '.').replace(/\\/g, '/').trim();
+  if (normRoot === '/data' && raw.startsWith('/data/workspace/')) {
+    return '/data/' + raw.slice('/data/workspace/'.length);
+  }
+  if (normRoot === '/data' && raw === '/data/workspace') {
+    return '/data';
+  }
+  return raw;
+}
+
 /**
  * Resolve and guard a path for a standard User (`role = user`).
- * Users are strictly confined to `/data/workspace/<username>/<workspace>`.
+ * Users are strictly confined to `/data/<username>/<workspace>` (and may access any of their own
+ * workspaces under `/data/<username>/<ws>` when they pass an explicit `/data/<username>/<ws>/...` path).
  */
 export function guardUserPath({
-  workspaceRoot = process.env.WORKSPACE_ROOT || '/data/workspace',
+  workspaceRoot = process.env.WORKSPACE_ROOT || '/data',
   username,
   workspace,
   targetPath = '.',
   mode = 'read'
 }) {
   const cleanUser = sanitizeSegment(username, 'user');
-  const userRoot = path.posix.join(workspaceRoot.replace(/\\/g, '/'), cleanUser);
+  const normRoot = (workspaceRoot || '/data').replace(/\\/g, '/').replace(/\/+$/, '');
+  const userRoot = path.posix.join(normRoot, cleanUser);
   fs.mkdirSync(userRoot, { recursive: true });
 
-  const wsDir = getUserWorkspaceDir(workspaceRoot, cleanUser, workspace || 'default-workspace');
-  fs.mkdirSync(wsDir, { recursive: true });
-
-  const raw = String(targetPath || '.').replace(/\\/g, '/').trim();
+  const raw = normalizeLegacyWorkspacePrefix(targetPath, normRoot);
 
   // Reject any explicit attempt to touch /data/all_users_ro
   if (raw.startsWith('/data/all_users_ro')) {
     throw new PathGuardError('Người dùng thường không có quyền truy cập dữ liệu giám sát (/data/all_users_ro).', 'FORBIDDEN_RO_MOUNT');
   }
+
+  // If the caller passed an absolute path naming one of this user's workspaces (/data/<user>/<ws>/...),
+  // honor that workspace as the target workspace while still enforcing confinement inside it.
+  const pathWs = extractWorkspaceFromPath(raw, cleanUser);
+  const effectiveWs = pathWs || workspace || 'default-workspace';
+  const wsDir = getUserWorkspaceDir(normRoot, cleanUser, effectiveWs);
+  fs.mkdirSync(wsDir, { recursive: true });
 
   let candidate;
   if (path.posix.isAbsolute(raw)) {
@@ -115,17 +136,21 @@ export function guardUserPath({
     candidate = path.posix.resolve(wsDir, raw);
   }
 
-  // Check against the specific workspace directory (or userRoot if listing workspaces)
+  // Allow listing the user's own root `/data/<username>` (or `/data` when it maps to userRoot)
+  if (raw === userRoot || (raw === normRoot && mode === 'read')) {
+    return assertWithinRoot(userRoot, userRoot, mode);
+  }
+
   const boundary = (mode === 'list-workspaces') ? userRoot : wsDir;
   return assertWithinRoot(boundary, candidate, mode);
 }
 
 /**
  * Resolve and guard a path for Admin (`role = admin`).
- * Admin can read/write inside `/data/workspace/admin/<ws>` and READ-ONLY inside `/data/all_users_ro`.
+ * Admin can read/write inside `/data/admin/<ws>` and READ-ONLY inside `/data/all_users_ro`.
  */
 export function guardAdminPath({
-  workspaceRoot = process.env.WORKSPACE_ROOT || '/data/workspace',
+  workspaceRoot = process.env.WORKSPACE_ROOT || '/data',
   roRoot = process.env.ALL_USERS_RO_ROOT || '/data/all_users_ro',
   username = 'admin',
   workspace = 'default-workspace',
@@ -133,12 +158,9 @@ export function guardAdminPath({
   mode = 'read'
 }) {
   const cleanAdmin = sanitizeSegment(username, 'admin');
-  const wsDir = getUserWorkspaceDir(workspaceRoot, cleanAdmin, workspace);
-  fs.mkdirSync(wsDir, { recursive: true });
+  const normRoot = (workspaceRoot || '/data').replace(/\\/g, '/').replace(/\/+$/, '');
+  const raw = normalizeLegacyWorkspacePrefix(targetPath, normRoot);
 
-  const raw = String(targetPath || '.').replace(/\\/g, '/').trim();
-
-  // Check if path targets /data/all_users_ro
   const normRoRoot = roRoot.replace(/\\/g, '/').replace(/\/+$/, '');
   if (raw === normRoRoot || raw.startsWith(normRoRoot + '/')) {
     if (mode === 'write' || mode === 'edit' || mode === 'delete') {
@@ -150,22 +172,53 @@ export function guardAdminPath({
     return assertWithinRoot(normRoRoot, raw, 'read');
   }
 
-  const candidate = path.posix.isAbsolute(raw) ? raw : path.posix.resolve(wsDir, raw);
-  const adminUserRoot = path.posix.join(workspaceRoot.replace(/\\/g, '/'), cleanAdmin);
+  const pathWs = extractWorkspaceFromPath(raw, cleanAdmin);
+  const effectiveWs = pathWs || workspace || 'default-workspace';
+  const wsDir = getUserWorkspaceDir(normRoot, cleanAdmin, effectiveWs);
+  fs.mkdirSync(wsDir, { recursive: true });
+
+  const adminUserRoot = path.posix.join(normRoot, cleanAdmin);
   fs.mkdirSync(adminUserRoot, { recursive: true });
+
+  if (raw === adminUserRoot || (raw === normRoot && mode === 'read')) {
+    return assertWithinRoot(adminUserRoot, adminUserRoot, mode);
+  }
+
+  const candidate = path.posix.isAbsolute(raw) ? raw : path.posix.resolve(wsDir, raw);
   return assertWithinRoot(mode === 'list-workspaces' ? adminUserRoot : wsDir, candidate, mode);
 }
 
 /**
- * Helper to locate an existing file inside a workspace (either by direct path or by searching `files/<cat>/<filename>`).
+ * Locate an existing file inside `wsDir` first (`files/<cat>/<filename>`), and if not found there,
+ * search across all workspaces belonging to the SAME user (`/data/<user>/<any-ws>/files/<cat>/<filename>`).
  */
 export function findFileInWorkspace(wsDir, requestedPath) {
   const filename = path.basename(String(requestedPath || '').replace(/\\/g, '/'));
+  if (!filename) return null;
+
   for (const cat of ALL_CATEGORIES) {
     const candidate = path.posix.join(wsDir, 'files', cat, filename);
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
       return candidate;
     }
   }
+
+  // Fallback: check sibling workspaces of the SAME user (e.g. file uploaded into /data/alice/Test/files/pdf/...)
+  const userRoot = path.posix.dirname(wsDir.replace(/\\/g, '/'));
+  if (fs.existsSync(userRoot)) {
+    try {
+      for (const wsEntry of fs.readdirSync(userRoot, { withFileTypes: true })) {
+        if (!wsEntry.isDirectory()) continue;
+        const siblingWs = path.posix.join(userRoot, wsEntry.name);
+        for (const cat of ALL_CATEGORIES) {
+          const candidate = path.posix.join(siblingWs, 'files', cat, filename);
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            return candidate;
+          }
+        }
+      }
+    } catch {}
+  }
+
   return null;
 }

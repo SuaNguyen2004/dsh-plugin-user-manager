@@ -3,7 +3,7 @@
 // Runs on the host against the live Docker daemon (same socket the gateway uses).
 //
 // Acceptance criteria covered:
-//  #3  first tool call creates dsh-tool-<username>; file lands in /data/workspace/<ws>/files/<cat>/
+//  #3  first tool call creates dsh-tool-<username>; file lands in /data/<ws>/files/<cat>/
 //  #7  admin tool call creates dsh-tool-<admin> with admin manifest (admin_* works)
 //  #8  idle container removed via sweeper; volume + data survive; next call recreates container
 //  #9  concurrent first tool calls for one user create exactly ONE container (mutex)
@@ -20,9 +20,9 @@ import { createInternalHandler, checkInternalToken } from '../gateway/exec-route
 
 const INT_TOKEN = 'phase3-test-token-xyz';
 const USERS = [
-  { id: 901, username: 'alice', role: 'user' },
-  { id: 902, username: 'bob', role: 'user' },
-  { id: 900, username: 'admin', role: 'admin' }
+  { id: 901, username: 'alice', role: 'user', status: 'active' },
+  { id: 902, username: 'bob', role: 'user', status: 'active' },
+  { id: 900, username: 'admin', role: 'admin', status: 'active' }
 ];
 process.env.DOCKER_NETWORK = process.env.DOCKER_NETWORK || '';
 
@@ -160,9 +160,9 @@ await cleanupAll();
 
   // Volume + data intact
   await docker.getVolume(toolVolumeName(902, 'user')).inspect();
-  const reborn = await execTool({ userId: 902, username: 'bob', role: 'user', tool: 'list_dir', args: { workspace: 'b', path: 'files' } });
+  const reborn = await execTool({ userId: 902, username: 'bob', role: 'user', tool: 'list_dir', args: { workspace: 'b', path: 'files/docs' } });
   assert.equal(reborn.ok, true, JSON.stringify(reborn));
-  assert.ok(JSON.stringify(reborn.result).includes('.md'), 'bob files survived container removal');
+  assert.ok(JSON.stringify(reborn.result).includes('.md'), 'bob files survived container removal: ' + JSON.stringify(reborn.result));
   assert.equal((await listToolContainers({ all: false })).filter((c) => String(c.userId) === '902').length, 1, 'container recreated on next call');
   console.log('[PASS] 8. Idle sweep removed container; dsh-vol-user902 + files intact; next call recreated container.');
   delete process.env.TOOL_IDLE_MINUTES;

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const POOLS_FILE = process.env.DSH_KEY_POOLS_FILE || path.resolve(process.cwd(), 'data/key_pools.json');
+const GATEWAY_DATA_DIR = path.dirname(process.env.SQLITE_PATH || '/data/gateway/users.db');
+const POOLS_FILE = process.env.DSH_KEY_POOLS_FILE || path.join(GATEWAY_DATA_DIR, 'key_pools.json');
 
 export function maskApiKey(key) {
   if (!key || typeof key !== 'string') return null;

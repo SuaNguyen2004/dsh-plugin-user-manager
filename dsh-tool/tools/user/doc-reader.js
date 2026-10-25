@@ -6,7 +6,7 @@ import { ensureWorkspaceStructure, sanitizeSegment, normalizeWorkspaceName } fro
 import { guardUserPath, findFileInWorkspace } from '../common/path-guard.js';
 import { extractDocumentText } from '../common/doc-extractor.js';
 
-const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/data/workspace';
+const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/data';
 
 export async function readDocument(args, ctx) {
   const username = sanitizeSegment(ctx.username || process.env.DSH_USERNAME || 'user', 'user');

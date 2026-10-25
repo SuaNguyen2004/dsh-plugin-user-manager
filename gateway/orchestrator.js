@@ -76,7 +76,7 @@ async function withUserLock(userId, fn) {
   return run;
 }
 
-async function findToolContainer(userId) {
+async function findToolContainer(userId, username) {
   try {
     const list = await docker.listContainers({
       all: true,
@@ -84,13 +84,19 @@ async function findToolContainer(userId) {
     });
     if (list.length > 0) return docker.getContainer(list[0].Id);
   } catch {}
-  try {
-    const legacy = docker.getContainer(`dsh-user-${userId}`);
-    await legacy.inspect();
-    return legacy;
-  } catch {
-    return null;
+  if (username) {
+    try {
+      const byName = docker.getContainer(toolContainerName(username));
+      const info = await byName.inspect();
+      // If a container with this username exists for a different userId (e.g. test vs prod id), replace it cleanly
+      if (info?.Config?.Labels?.['dsh.userId'] && String(info.Config.Labels['dsh.userId']) !== String(userId)) {
+        await byName.remove({ force: true });
+        return null;
+      }
+      return byName;
+    } catch {}
   }
+  return null;
 }
 
 async function ensureVolume(userId, username, role) {
@@ -131,15 +137,20 @@ async function waitForToolReady(container) {
         Cmd: ['test', '-f', '/run/dsh-tool/ready'],
         AttachStdout: false, AttachStderr: false
       });
-      const stream = await exec.start({});
-      await new Promise((resolve, reject) => {
-        stream.on('end', resolve);
-        stream.on('error', reject);
-      });
-      const info = await exec.inspect();
-      if (info.ExitCode === 0) return true;
+      await exec.start({ Detach: true });
+      // Wait briefly for the detached probe to finish, then read ExitCode via inspect().
+      // Avoids listening for `stream.end` on a non-attached stream, which hangs on Windows named pipe.
+      const probeDeadline = Date.now() + 2000;
+      while (Date.now() < probeDeadline) {
+        const info = await exec.inspect();
+        if (!info.Running) {
+          if (info.ExitCode === 0) return true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 40));
+      }
     } catch {}
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 200));
   }
   return false;
 }
@@ -150,7 +161,7 @@ async function waitForToolReady(container) {
 export async function ensureToolContainer(userId, username, role = 'user') {
   return withUserLock(userId, async () => {
     const t0 = Date.now();
-    let container = await findToolContainer(userId);
+    let container = await findToolContainer(userId, username);
     if (container) {
       const inspect = await container.inspect().catch(() => null);
       if (inspect && inspect.State.Running) {
@@ -168,7 +179,7 @@ export async function ensureToolContainer(userId, username, role = 'user') {
 
     const cleanUser = sanitizeSegment(username);
     const vol = await ensureVolume(userId, cleanUser, role);
-    const binds = [`${vol}:/data/workspace:rw`];
+    const binds = [`${vol}:/data:rw`];
     if (role === 'admin') binds.push(...(await collectAdminRoBinds()));
 
     const networkMode = TOOL_NETWORK_DISABLED ? 'none' : await getGatewayNetwork();
@@ -212,6 +223,12 @@ export async function ensureToolContainer(userId, username, role = 'user') {
   });
 }
 
+/**
+ * Collect a non-TTY docker exec stream and demultiplex the docker frame format
+ * ([1 byte stream type][3 zero bytes][4 bytes BE payload length][payload]).
+ * Without demuxing, the 8-byte frame headers get glued to the runner's JSON line
+ * and JSON.parse fails.
+ */
 function readStreamToString(stream, limit) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -221,11 +238,31 @@ function readStreamToString(stream, limit) {
       if (truncated) return;
       chunks.push(c);
       size += c.length;
-      if (size > limit) { truncated = true; resolve({ text: Buffer.concat(chunks).toString('utf8'), truncated }); }
+      if (size > limit) { truncated = true; resolve({ text: '', truncated }); }
     });
-    stream.on('end', () => resolve({ text: Buffer.concat(chunks).toString('utf8'), truncated }));
+    stream.on('end', () => resolve({ text: demuxExecOutput(Buffer.concat(chunks)), truncated }));
+    stream.on('close', () => resolve({ text: demuxExecOutput(Buffer.concat(chunks)), truncated }));
     stream.on('error', reject);
   });
+}
+
+function demuxExecOutput(buf) {
+  const parts = [];
+  let off = 0;
+  while (off + 8 <= buf.length) {
+    const type = buf[off];
+    const len = buf.readUInt32BE(off + 4);
+    if (type !== 1 && type !== 2) {
+      // Not a docker frame (e.g. Tty mode) — treat everything remaining as raw text.
+      parts.push(buf.subarray(off).toString('utf8'));
+      break;
+    }
+    const body = buf.subarray(off + 8, off + 8 + len).toString('utf8');
+    if (type === 1) parts.push(body); // stdout only; stderr is captured for logs elsewhere
+    off += 8 + len;
+  }
+  if (off < buf.length) parts.push(buf.subarray(off).toString('utf8'));
+  return parts.join('');
 }
 
 /**
@@ -335,12 +372,12 @@ export async function listToolContainers({ all = true } = {}) {
 }
 
 /** Remove the user's tool container (stop + rm). Volume and data stay untouched. */
-export async function killToolContainer(userId) {
-  const container = await findToolContainer(userId);
+export async function killToolContainer(userId, username) {
+  const container = await findToolContainer(userId, username);
   if (!container) return false;
   try {
     const inspect = await container.inspect();
-    if (inspect.State.Running) await container.stop({ t: 3 }).catch(() => container.kill());
+    if (inspect.State.Running) await container.stop({ t: 2 }).catch(() => container.kill());
     await container.remove({ force: true });
     return true;
   } catch (err) {
@@ -361,7 +398,7 @@ export async function cleanupIdleToolContainers(idleMinutes) {
     const idle = last === undefined ? Infinity : now - last;
     if (idle >= idleMs) {
       console.log(`[orchestrator] Tool container ${c.name} idle for ${last === undefined ? 'unknown' : Math.round(idle / 1000) + 's'} (>${minutes}m). Removing (volume kept)...`);
-      if (await killToolContainer(userId)) killed.push({ userId, name: c.name });
+      if (await killToolContainer(userId, c.username)) killed.push({ userId, name: c.name });
     }
   }
   return killed;

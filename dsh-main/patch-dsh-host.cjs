@@ -215,7 +215,7 @@ for (const apiFile of apiSessionFiles) {
       patched = true;
     }
 
-    // 6.2 Reject prompt on read-only sessions
+    // 6.2 Reject prompt on read-only sessions (sessions belonging to another user's home or ro-* workspace)
     const targetPrompt = 'async prompt(request) {';
     if (content.includes(targetPrompt) && !content.includes('all_dsh_homes_ro')) {
       content = content.replace(
@@ -223,16 +223,34 @@ for (const apiFile of apiSessionFiles) {
         `async prompt(request) {
 \t\ttry {
 \t\t\tconst fs = await import('node:fs');
-\t\t\tconst sPath = \`/data/dsh_home/sessions/--data-workspace--/\${request.sessionId}\`;
-\t\t\tif (fs.existsSync(sPath)) {
-\t\t\t\tfor (const f of fs.readdirSync(sPath)) {
-\t\t\t\t\tconst fp = \`\${sPath}/\${f}\`;
-\t\t\t\t\ttry {
-\t\t\t\t\t\tif (fs.lstatSync(fp).isSymbolicLink() && fs.readlinkSync(fp).includes('all_dsh_homes_ro')) {
-\t\t\t\t\t\t\tthrow new RemoteError("session/read-only", "Phiên làm việc này thuộc về User khác (Chỉ đọc). Bạn không thể gửi tin nhắn vào phiên này. Vui lòng quay lại Workspace của Admin để chat bình thường.", {});
+\t\t\tconst path = await import('node:path');
+\t\t\tconst dshHome = process.env.DSH_HOME || '/data/dsh_home';
+\t\t\tconst wsJsonPath = path.posix.join(dshHome, 'storages', 'workspace.json');
+\t\t\tif (fs.existsSync(wsJsonPath)) {
+\t\t\t\tconst wsData = JSON.parse(fs.readFileSync(wsJsonPath, 'utf8'));
+\t\t\t\tfor (const [wId, w] of Object.entries(wsData?.tables?.workspaces || {})) {
+\t\t\t\t\tif (wId.startsWith('ro-') && Array.isArray(w?.sessionIds) && w.sessionIds.includes(request.sessionId)) {
+\t\t\t\t\t\tthrow new RemoteError("session/read-only", "Phiên làm việc này thuộc về User khác (Chỉ đọc). Bạn không thể gửi tin nhắn vào phiên này. Vui lòng quay lại Workspace của Admin để chat bình thường.", { sessionId: request.sessionId });
+\t\t\t\t\t}
+\t\t\t\t}
+\t\t\t}
+\t\t\tconst sessionsRoot = path.posix.join(dshHome, 'sessions');
+\t\t\tif (fs.existsSync(sessionsRoot)) {
+\t\t\t\tfor (const proj of fs.readdirSync(sessionsRoot)) {
+\t\t\t\t\tconst sPath = path.posix.join(sessionsRoot, proj, String(request.sessionId));
+\t\t\t\t\tif (!fs.existsSync(sPath)) continue;
+\t\t\t\t\tfor (const f of fs.readdirSync(sPath)) {
+\t\t\t\t\t\tconst fp = path.posix.join(sPath, f);
+\t\t\t\t\t\ttry {
+\t\t\t\t\t\t\tif (fs.lstatSync(fp).isSymbolicLink()) {
+\t\t\t\t\t\t\t\tconst linkTarget = fs.readlinkSync(fp);
+\t\t\t\t\t\t\t\tif (linkTarget.includes('all_dsh_homes_ro') || !linkTarget.startsWith(dshHome)) {
+\t\t\t\t\t\t\t\t\tthrow new RemoteError("session/read-only", "Phiên làm việc này thuộc về User khác (Chỉ đọc). Bạn không thể gửi tin nhắn vào phiên này. Vui lòng quay lại Workspace của Admin để chat bình thường.", { sessionId: request.sessionId });
+\t\t\t\t\t\t\t\t}
+\t\t\t\t\t\t\t}
+\t\t\t\t\t\t} catch (e) {
+\t\t\t\t\t\t\tif (e instanceof RemoteError) throw e;
 \t\t\t\t\t\t}
-\t\t\t\t\t} catch (e) {
-\t\t\t\t\t\tif (e instanceof RemoteError) throw e;
 \t\t\t\t\t}
 \t\t\t\t}
 \t\t\t}
@@ -312,49 +330,70 @@ for (const uploadFile of uploadLibFiles) {
 \t\t\t\t\tconst prefix = sha256.slice(0, 2);
 \t\t\t\t\tconst dshHome = process.env.DSH_HOME || '/data/dsh_home';
 \t\t\t\t\tconst origPath = __nodePath.join(dshHome, 'attachments', 'v1', 'files', prefix, sha256, file.name);
-\t\t\t\t\tlet wsName = 'workspace';
+\t\t\t\t\tlet wsName = 'default-workspace';
 \t\t\t\t\tconst wsJsonPath = __nodePath.join(dshHome, 'storages', 'workspace.json');
 \t\t\t\t\tif (__nodeFs.existsSync(wsJsonPath)) {
 \t\t\t\t\t\ttry {
 \t\t\t\t\t\t\tconst wsData = JSON.parse(__nodeFs.readFileSync(wsJsonPath, 'utf8'));
 \t\t\t\t\t\t\tif (wsData && wsData.tables && wsData.tables.workspaces) {
-\t\t\t\t\t\t\t\tfor (const ws of Object.values(wsData.tables.workspaces)) {
-\t\t\t\t\t\t\t\t\tif (ws && Array.isArray(ws.sessionIds) && (ws.sessionIds.includes(agent.id) || ws.sessionIds.includes('session-' + agent.id))) {
+\t\t\t\t\t\t\t\tlet matched = false;
+\t\t\t\t\t\t\t\tfor (const [wsId, ws] of Object.entries(wsData.tables.workspaces)) {
+\t\t\t\t\t\t\t\t\tif (wsId.startsWith('ro-') || !ws) continue;
+\t\t\t\t\t\t\t\t\tif (Array.isArray(ws.sessionIds) && (ws.sessionIds.includes(agent.id) || ws.sessionIds.includes('session-' + agent.id))) {
 \t\t\t\t\t\t\t\t\t\tlet title = (ws.title || '').replace(/\\s*\\([^)]*\\)$/, '').trim();
 \t\t\t\t\t\t\t\t\t\tif (title && title.toLowerCase() !== 'workspace') {
 \t\t\t\t\t\t\t\t\t\t\twsName = title;
+\t\t\t\t\t\t\t\t\t\t\tmatched = true;
 \t\t\t\t\t\t\t\t\t\t}
 \t\t\t\t\t\t\t\t\t\tbreak;
+\t\t\t\t\t\t\t\t\t}
+\t\t\t\t\t\t\t\t}
+\t\t\t\t\t\t\t\tif (!matched) {
+\t\t\t\t\t\t\t\t\tlet bestTime = -1;
+\t\t\t\t\t\t\t\t\tfor (const [wsId, ws] of Object.entries(wsData.tables.workspaces)) {
+\t\t\t\t\t\t\t\t\t\tif (wsId.startsWith('ro-') || !ws) continue;
+\t\t\t\t\t\t\t\t\t\tlet title = (ws.title || '').replace(/\\s*\\([^)]*\\)$/, '').trim();
+\t\t\t\t\t\t\t\t\t\tif (!title || title.toLowerCase() === 'workspace') continue;
+\t\t\t\t\t\t\t\t\t\tconst ts = Date.parse(ws.updatedAt || ws.createdAt || '') || 0;
+\t\t\t\t\t\t\t\t\t\tif (ts >= bestTime) { bestTime = ts; wsName = title; }
 \t\t\t\t\t\t\t\t\t}
 \t\t\t\t\t\t\t\t}
 \t\t\t\t\t\t\t}
 \t\t\t\t\t\t} catch (e) {}
 \t\t\t\t\t}
 \t\t\t\t\twsName = wsName.replace(/[\\\\/:*?"<>|]/g, '_');
-\t\t\t\t\tconst ext = (__nodePath.extname(file.name) || '').toLowerCase().replace('.', '');
+\t\t\t\t\tconst uname = (process.env.DSH_USER_NAME || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+\t\t\t\t\tconst ext = (__nodePath.extname(file.name) || '').toLowerCase().replace(/^\\./, '');
 \t\t\t\t\tlet cat = 'others';
-\t\t\t\t\tif (['doc', 'docx', 'dot', 'dotx', 'odt', 'rtf'].includes(ext)) cat = 'docs';
-\t\t\t\t\telse if (['pdf'].includes(ext)) cat = 'pdf';
-\t\t\t\t\telse if (['xls', 'xlsx', 'xlsm', 'csv', 'tsv'].includes(ext)) cat = 'sheets';
-\t\t\t\t\telse if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'].includes(ext)) cat = 'images';
-\t\t\t\t\telse if (['txt', 'md', 'json', 'yaml', 'yml', 'xml', 'log', 'py', 'js', 'ts', 'html', 'css'].includes(ext)) cat = 'text';
-
-\t\t\t\t\tconst targetDir = __nodePath.join('/data/workspace', wsName, 'files', cat);
-\t\t\t\t\tif (!__nodeFs.existsSync(targetDir)) {
-\t\t\t\t\t\t__nodeFs.mkdirSync(targetDir, { recursive: true });
+\t\t\t\t\tif (['doc','docx','dot','dotx','odt','rtf','txt','md','json','yaml','yml','xml','log','py','js','ts','html','css'].includes(ext)) cat = 'docs';
+\t\t\t\t\telse if (ext === 'pdf') cat = 'pdf';
+\t\t\t\t\telse if (['xls','xlsx','xlsm','csv','tsv'].includes(ext)) cat = 'sheets';
+\t\t\t\t\telse if (['png','jpg','jpeg','gif','bmp','webp','svg'].includes(ext)) cat = 'images';
+\t\t\t\t\tconst fallbackPath = __nodePath.posix.join('/data', uname, wsName, 'files', cat, file.name);
+\t\t\t\t\tif (__nodeFs.existsSync(origPath) && process.env.GATEWAY_INTERNAL_URL) {
+\t\t\t\t\t\tconst b64 = __nodeFs.readFileSync(origPath).toString('base64');
+\t\t\t\t\t\tconst gwRes = await fetch(process.env.GATEWAY_INTERNAL_URL + '/internal/exec', {
+\t\t\t\t\t\t\tmethod: 'POST',
+\t\t\t\t\t\t\theaders: { 'content-type': 'application/json', 'x-dsh-internal-token': process.env.INTERNAL_TOKEN || '' },
+\t\t\t\t\t\tbody: JSON.stringify({
+\t\t\t\t\t\t\t\ttool: 'upload_file',
+\t\t\t\t\t\t\t\tuserId: process.env.DSH_USER_ID || '0',
+\t\t\t\t\t\t\t\tusername: uname,
+\t\t\t\t\t\t\t\trole: process.env.DSH_USER_ROLE || 'user',
+\t\t\t\t\t\t\t\tworkspace: wsName,
+\t\t\t\t\t\t\t\targs: { workspace: wsName, filename: file.name, content: b64, encoding: 'base64' }
+\t\t\t\t\t\t\t})
+\t\t\t\t\t\t}).then(r => r.json()).catch(() => null);
+\t\t\t\t\t\tconst cleanFilePath = (gwRes?.result?.path || fallbackPath).replace(/^\\/+data\\/+workspace\\//, '/data/');
+\t\t\t\t\t\tconst indexPath = __nodePath.join(dshHome, 'attachments', 'v1', 'workspace_files_index.json');
+\t\t\t\t\t\tlet index = {};
+\t\t\t\t\t\tif (__nodeFs.existsSync(indexPath)) {
+\t\t\t\t\t\t\ttry { index = JSON.parse(__nodeFs.readFileSync(indexPath, 'utf8')); } catch (e) {}
+\t\t\t\t\t\t}
+\t\t\t\t\t\tindex[String(file.attachmentId)] = cleanFilePath;
+\t\t\t\t\t\t__nodeFs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf8');
+\t\t\t\t\t\tconsole.log('[WorkspaceFile] Uploaded file saved to sandbox BEFORE prompt:', file.name, '->', cleanFilePath);
 \t\t\t\t\t}
-\t\t\t\t\tconst cleanFilePath = __nodePath.join(targetDir, file.name);
-\t\t\t\t\tif (__nodeFs.existsSync(origPath)) {
-\t\t\t\t\t\t__nodeFs.copyFileSync(origPath, cleanFilePath);
-\t\t\t\t\t}
-\t\t\t\t\tconst indexPath = __nodePath.join(dshHome, 'attachments', 'v1', 'workspace_files_index.json');
-\t\t\t\t\tlet index = {};
-\t\t\t\t\tif (__nodeFs.existsSync(indexPath)) {
-\t\t\t\t\t\ttry { index = JSON.parse(__nodeFs.readFileSync(indexPath, 'utf8')); } catch (e) {}
-\t\t\t\t\t}
-\t\t\t\t\tindex[String(file.attachmentId)] = cleanFilePath;
-\t\t\t\t\t__nodeFs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf8');
-\t\t\t\t\tconsole.log('[WorkspaceFile] Auto-organized file upload:', file.name, '->', cleanFilePath);
 \t\t\t\t}
 \t\t\t} catch (err) {
 \t\t\t\tconsole.warn('[WorkspaceFile] Warning organizing upload:', err.message);
@@ -372,7 +411,8 @@ for (const uploadFile of uploadLibFiles) {
   }
 }
 
-// Patch 9: Serve clean workspace path to LLM from fileHostPath
+// Patch 9: Always serve the sandbox workspace path (/data/<user>/<ws>/files/<cat>/<file>)
+// to the LLM from fileHostPath(ref) — NEVER the internal /data/dsh_homes/.../attachments/... path!
 const attachmentLocalFiles = [
   '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js',
   '/usr/local/lib/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js'
@@ -389,7 +429,7 @@ for (const attachFile of attachmentLocalFiles) {
       patched = true;
     }
 
-    // 9.2 Patch fileHostPath
+    // 9.2 Patch fileHostPath so it returns /data/<user>/<ws>/files/<cat>/<file> directly
     const targetMethod = 'fileHostPath(ref) {\n\t\treturn storedFilePath(this.root, ref);\n\t}';
     const cleanMethod = `fileHostPath(ref) {
 \t\ttry {
@@ -397,10 +437,37 @@ for (const attachFile of attachmentLocalFiles) {
 \t\t\tif (__fsLocal.existsSync(indexPath)) {
 \t\t\t\tconst index = JSON.parse(__fsLocal.readFileSync(indexPath, 'utf8'));
 \t\t\t\tconst customPath = index[String(ref.attachmentId)];
-\t\t\t\tif (customPath && __fsLocal.existsSync(customPath)) {
-\t\t\t\t\treturn customPath;
+\t\t\t\tif (customPath) {
+\t\t\t\t\treturn String(customPath).replace(/^\\/+data\\/+workspace\\//, '/data/');
 \t\t\t\t}
 \t\t\t}
+\t\t\tconst rawFilePath = storedFilePath(this.root, ref);
+\t\t\tconst fileName = __pathLocal.basename(rawFilePath);
+\t\t\tconst ext = (__pathLocal.extname(fileName) || '').toLowerCase().replace(/^\\./, '');
+\t\t\tlet cat = 'others';
+\t\t\tif (['doc','docx','dot','dotx','odt','rtf','txt','md','json','yaml','yml','xml','log','py','js','ts','html','css'].includes(ext)) cat = 'docs';
+\t\t\telse if (ext === 'pdf') cat = 'pdf';
+\t\t\telse if (['xls','xlsx','xlsm','csv','tsv'].includes(ext)) cat = 'sheets';
+\t\t\telse if (['png','jpg','jpeg','gif','bmp','webp','svg'].includes(ext)) cat = 'images';
+\t\t\tconst uname = (process.env.DSH_USER_NAME || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+\t\t\tlet wsName = process.env.DSH_WORKSPACE || 'default-workspace';
+\t\t\tconst dshHome = process.env.DSH_HOME || '/data/dsh_home';
+\t\t\tconst wsJsonPath = __pathLocal.join(dshHome, 'storages', 'workspace.json');
+\t\t\tif (__fsLocal.existsSync(wsJsonPath)) {
+\t\t\t\ttry {
+\t\t\t\t\tconst wsData = JSON.parse(__fsLocal.readFileSync(wsJsonPath, 'utf8'));
+\t\t\t\t\tlet bestTime = -1;
+\t\t\t\t\tfor (const [wsId, ws] of Object.entries(wsData?.tables?.workspaces || {})) {
+\t\t\t\t\t\tif (wsId.startsWith('ro-') || !ws) continue;
+\t\t\t\t\t\tconst t = String(ws.title || '').replace(/\\s*\\([^)]*\\)$/, '').trim();
+\t\t\t\t\t\tif (!t || t.toLowerCase() === 'workspace') continue;
+\t\t\t\t\t\tconst ts = Date.parse(ws.updatedAt || ws.createdAt || '') || 0;
+\t\t\t\t\t\tif (ts >= bestTime) { bestTime = ts; wsName = t; }
+\t\t\t\t\t}
+\t\t\t\t} catch (e) {}
+\t\t\t}
+\t\t\twsName = wsName.replace(/[\\\\/:*?"<>|]/g, '_');
+\t\t\treturn __pathLocal.posix.join('/data', uname, wsName, 'files', cat, fileName);
 \t\t} catch (e) {}
 \t\treturn storedFilePath(this.root, ref);
 \t}`;
@@ -457,4 +524,40 @@ for (const pFile of jsonlPersistenceFiles) {
     }
   }
 }
+
+// Patch 10: Disable preset-scoped local tool plugins (dsh-tool-bash, dsh-tool-pwsh, dsh-tool-fs,
+// dsh-tool-fs-search, dsh-tool-bash-persistent, dsh-tool-pwsh-persistent, dsh-tool-str-replace-editor)
+// so agent presets (standard/ptc/minimal/cordis) NEVER register local landlock-run bash or local fs tools
+// that shadow the remote sandbox tools registered by dsh-user-container-plugin.
+const localToolPkgs = [
+  'dsh-tool-bash',
+  'dsh-tool-pwsh',
+  'dsh-tool-fs',
+  'dsh-tool-fs-search',
+  'dsh-tool-bash-persistent',
+  'dsh-tool-pwsh-persistent',
+  'dsh-tool-str-replace-editor'
+];
+
+for (const pkg of localToolPkgs) {
+  const candidates = [
+    `/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/${pkg}/lib/index.js`,
+    `/usr/local/lib/node_modules/@deepseek-ai/${pkg}/lib/index.js`
+  ];
+  for (const file of candidates) {
+    if (!fs.existsSync(file)) continue;
+    let src = fs.readFileSync(file, 'utf8');
+    if (src.includes('/* DISABLED_LOCAL_TOOL_FOR_SANDBOX_EXEC_ROUTER */')) continue;
+    // Neutralize apply(ctx, config) so the plugin activates cleanly as a no-op in every preset scope
+    const patchedSrc = src.replace(
+      /function apply\s*\([^)]*\)\s*\{/,
+      'function apply() { /* DISABLED_LOCAL_TOOL_FOR_SANDBOX_EXEC_ROUTER */ return;'
+    );
+    if (patchedSrc !== src) {
+      fs.writeFileSync(file, patchedSrc, 'utf8');
+      console.log('[patch-dsh-host] Neutralized local tool plugin (routed via dsh-tool sandbox instead):', file);
+    }
+  }
+}
+
 

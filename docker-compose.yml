@@ -33,7 +33,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - dsh-gateway-data:/data/gateway
     tmpfs:
-      - /data/temp:size=64m,mode=1777
+      - /data/temp:size=64m,mode=1777,exec
     depends_on:
       - dsh-main
     networks:
@@ -56,7 +56,7 @@ services:
     volumes:
       - dsh-homes:/data/dsh_homes
     tmpfs:
-      - /data/temp:size=64m,mode=1777
+      - /data/temp:size=64m,mode=1777,exec
     networks:
       - default
 

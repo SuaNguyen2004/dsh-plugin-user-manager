@@ -19,15 +19,18 @@ COPY runner.js manifest.user.json manifest.admin.json ./
 COPY tools/ ./tools/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh \
-    && mkdir -p /data/workspace /data/all_users_ro /data/temp /run/dsh-tool \
+    && mkdir -p /data /run/dsh-tool \
     && chown -R node:node /opt/dsh-tool /data /run/dsh-tool
+# NOTE: Each user volume is mounted directly at /data/<username> (so the path inside
+# the container is /data/<username>/<workspace>/files/<category>/<file>).
+# /data/all_users_ro is only created/mounted when DSH_ROLE=admin.
 
 ENV NODE_ENV=production \
     DSH_ROLE=user \
-    WORKSPACE_ROOT=/data/workspace \
+    WORKSPACE_ROOT=/data \
     ALL_USERS_RO_ROOT=/data/all_users_ro \
-    TEMP=/data/temp \
-    TMP=/data/temp
+    TEMP=/tmp \
+    TMP=/tmp
 
 USER node
 

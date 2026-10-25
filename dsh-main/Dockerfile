@@ -16,6 +16,7 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY lib/ ./lib/
+COPY router.js ./
 COPY cordis.patch.yml ./
 COPY patch-chmod.cjs ./
 COPY patch-dsh-host.cjs ./
@@ -40,7 +41,6 @@ ENV NODE_ENV=production \
     NODE_OPTIONS="--require /app/patch-chmod.cjs" \
     ENABLE_DOCKER_CHMOD_WORKAROUND=true \
     DSH_HOMES_ROOT=/data/dsh_homes \
-    DSH_HOME=/data/dsh_home \
     GATEWAY_INTERNAL_URL=http://dsh-gateway:3091 \
     TEMP=/data/temp \
     TMP=/data/temp \
@@ -51,8 +51,8 @@ EXPOSE 3090
 USER node
 
 HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://127.0.0.1:3090/ || exit 1
+    CMD curl -f http://127.0.0.1:3090/healthz || exit 1
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
-CMD ["dsh", "web", "--port", "3090", "--no-open"]
+CMD ["node", "/app/router.js"]

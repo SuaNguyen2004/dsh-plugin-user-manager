@@ -3,7 +3,7 @@ set -e
 
 ROLE="${DSH_ROLE:-user}"
 USERNAME="${DSH_USERNAME:-user}"
-WORKSPACE_ROOT="${WORKSPACE_ROOT:-/data/workspace}"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-/data}"
 
 if [ "$ROLE" != "user" ] && [ "$ROLE" != "admin" ]; then
     echo "[dsh-tool] ERROR: Invalid DSH_ROLE '$ROLE'. Allowed: user | admin" >&2
@@ -17,19 +17,25 @@ if [ ! -f "$MANIFEST_FILE" ]; then
 fi
 
 # Prepare the primary directory layout for this user:
-#   /data/workspace/<username>/default-workspace/files/{docs,pdf,sheets,images,others}
+#   /data/<username>/default-workspace/files/{docs,pdf,sheets,images,others}
 SAFE_USER=$(echo "$USERNAME" | tr -c '[:alnum:]._-' '_')
 mkdir -p "${WORKSPACE_ROOT}/${SAFE_USER}/default-workspace/files/docs" \
          "${WORKSPACE_ROOT}/${SAFE_USER}/default-workspace/files/pdf" \
          "${WORKSPACE_ROOT}/${SAFE_USER}/default-workspace/files/sheets" \
          "${WORKSPACE_ROOT}/${SAFE_USER}/default-workspace/files/images" \
          "${WORKSPACE_ROOT}/${SAFE_USER}/default-workspace/files/others" \
-         /run/dsh-tool /data/temp 2>/dev/null || true
+         /run/dsh-tool 2>/dev/null || true
+
+if [ "$ROLE" = "admin" ]; then
+    mkdir -p /data/all_users_ro 2>/dev/null || true
+else
+    rmdir /data/all_users_ro 2>/dev/null || true
+fi
 
 cp "$MANIFEST_FILE" /run/dsh-tool/active-manifest.json
 echo "$ROLE" > /run/dsh-tool/active-role
 echo "ready" > /run/dsh-tool/ready
 
-echo "[dsh-tool] Ready role=${ROLE} user=${SAFE_USER} manifest=${MANIFEST_FILE}"
+echo "[dsh-tool] Ready role=${ROLE} user=${SAFE_USER} root=${WORKSPACE_ROOT}/${SAFE_USER} manifest=${MANIFEST_FILE}"
 
 exec sleep infinity

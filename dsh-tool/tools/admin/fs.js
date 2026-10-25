@@ -13,7 +13,7 @@ import {
 } from '../common/auto-categorize.js';
 import { guardAdminPath, findFileInWorkspace } from '../common/path-guard.js';
 
-const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/data/workspace';
+const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/data';
 const RO_ROOT = process.env.ALL_USERS_RO_ROOT || '/data/all_users_ro';
 
 export async function ensureWorkspace(args, ctx) {

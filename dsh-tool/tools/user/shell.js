@@ -11,7 +11,7 @@ import {
 } from '../common/auto-categorize.js';
 import { guardUserPath } from '../common/path-guard.js';
 
-const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/data/workspace';
+const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/data';
 const MAX_OUTPUT_BYTES = 128 * 1024;
 
 export async function runBash(args, ctx) {
