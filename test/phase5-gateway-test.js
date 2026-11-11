@@ -70,16 +70,14 @@ console.log('=== PHASE 5 GATEWAY TEST ===');
   console.log('[PASS] 1. SQLite WAL initialized in gateway volume with 4 core tables (Users, Sessions, UserSessions, Attachments).');
 }
 
-// 2. Static UI check: no standalone admin.html in gateway/public; login.html redirects to "/" without /admin branch
+// 2. Admin dashboard is restored for role=admin, login redirects straight to "/"
 {
-  assert.equal(fs.existsSync(path.resolve('gateway/public/admin.html')), false, 'gateway/public/admin.html must be retired');
-  assert.equal(fs.existsSync(path.resolve('draft/legacy/gateway-public/admin.html')), true, 'admin.html preserved in draft/legacy/');
+  assert.equal(fs.existsSync(path.resolve('gateway/public/admin.html')), true, 'gateway/public/admin.html restored for admin');
   const loginHtml = fs.readFileSync(path.resolve('gateway/public/login.html'), 'utf8');
-  assert.ok(!loginHtml.includes("window.location.href = '/admin'"), 'login.html must not redirect admin to /admin');
-  assert.ok(!loginHtml.includes('Vào DeepSeek Harness'), 'no Vào DeepSeek Harness button');
+  assert.ok(!loginHtml.includes('Vào DeepSeek Harness'), 'no Vào DeepSeek Harness button in login');
   const injectSrc = fs.readFileSync(path.resolve('dsh-main/inject-ui.cjs'), 'utf8');
-  assert.ok(!injectSrc.includes('href="/admin"'), 'inject-ui.cjs must not link to /admin');
-  console.log('[PASS] 2. Standalone Admin dashboard & "Vào DeepSeek Harness" button removed; login redirects straight to "/".');
+  assert.ok(injectSrc.includes('href="/admin"'), 'inject-ui.cjs links to /admin for admin');
+  console.log('[PASS] 2. Admin dashboard & /admin button restored for Administrator; login redirects straight to "/".');
 }
 
 // 3. Mock dsh-main upstream (records received headers on HTTP and WS) + Gateway server

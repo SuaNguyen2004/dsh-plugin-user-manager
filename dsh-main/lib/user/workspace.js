@@ -34,6 +34,10 @@ export function listOtherUserHomes(currentUserId, currentUsername) {
     if (String(uid) === String(currentUserId) || uname.toLowerCase() === String(currentUsername).toLowerCase() || uname.toLowerCase() === 'admin') {
       continue;
     }
+    // Proactively ignore automated test users (e2e*, smoke*, test*)
+    if (/^(e2e|smoke|test)/i.test(uname)) {
+      continue;
+    }
     out.push({ userId: uid, username: uname, homeDir: path.posix.join(homesRoot, entry.name) });
   }
   return out;
@@ -86,7 +90,22 @@ function registerRoWorkspacesFromHomes(wsData, adminUsername) {
   if (!wsData.global) wsData.global = { initialized: true, workspaceIds: [] };
   if (!Array.isArray(wsData.global.workspaceIds)) wsData.global.workspaceIds = [];
 
+  // 1. Remove all old RO workspaces to prevent stale duplicates and path collisions
+  for (const wsId of Object.keys(wsData.tables.workspaces)) {
+    if (wsId.startsWith('ro-')) {
+      delete wsData.tables.workspaces[wsId];
+    }
+  }
+  wsData.global.workspaceIds = wsData.global.workspaceIds.filter((id) => !id.startsWith('ro-'));
+
+  // 2. Track all already accounted sessionIds from admin's own workspaces
   const allRegisteredSessionIds = new Set();
+  for (const [wsId, ws] of Object.entries(wsData.tables.workspaces)) {
+    if (Array.isArray(ws?.sessionIds)) {
+      for (const sid of ws.sessionIds) allRegisteredSessionIds.add(sid);
+    }
+  }
+
   const otherHomes = listOtherUserHomes(adminUserId, adminUsername);
 
   for (const { username: friendly, homeDir: userHomeDir } of otherHomes) {
@@ -121,13 +140,14 @@ function registerRoWorkspacesFromHomes(wsData, adminUsername) {
           const rawTitle = String(uWs.title || 'Workspace').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'Workspace';
           const displayTitle = `${rawTitle} (${friendly})`;
 
-          // Create an existing directory stub so DSH's realpathNormalize(ws.path) succeeds without mounting workspace volumes
-          const roPath = path.posix.join(roStubRoot, `${rawTitle} (${friendly})`);
+          // Ensure unique path per roWsId to prevent path collision
+          const roPath = path.posix.join(roStubRoot, roWsId);
           fs.mkdirSync(roPath, { recursive: true });
 
           const validSessionIds = [];
           const sessionIds = Array.isArray(uWs.sessionIds) ? uWs.sessionIds : [];
           for (const sid of sessionIds) {
+            if (allRegisteredSessionIds.has(sid)) continue;
             if (fs.existsSync(uSessionsDir)) {
               const srcProj = path.posix.join(uSessionsDir, `${sid}.json`);
               const dstProj = path.posix.join(adminSessionsDir, `${sid}.json`);
@@ -169,10 +189,11 @@ function registerRoWorkspacesFromHomes(wsData, adminUsername) {
 
     if (!registeredAny) {
       const roWsId = `ro-${friendly}-default`;
-      const roPath = path.posix.join(roStubRoot, `default-workspace (${friendly})`);
+      const roPath = path.posix.join(roStubRoot, roWsId);
       fs.mkdirSync(roPath, { recursive: true });
-      const validSessionIds = [...userPhysSessionMap.keys()];
+      const validSessionIds = [];
       for (const [sid, physInfo] of userPhysSessionMap.entries()) {
+        if (allRegisteredSessionIds.has(sid)) continue;
         const dstNative = path.posix.join(dshHome, 'sessions', physInfo.projName, sid);
         fs.mkdirSync(dstNative, { recursive: true });
         for (const f of fs.readdirSync(physInfo.srcPath)) {
@@ -183,6 +204,7 @@ function registerRoWorkspacesFromHomes(wsData, adminUsername) {
             try { fs.symlinkSync(sF, dF); } catch {}
           }
         }
+        validSessionIds.push(sid);
         allRegisteredSessionIds.add(sid);
       }
       wsData.tables.workspaces[roWsId] = {
@@ -195,6 +217,21 @@ function registerRoWorkspacesFromHomes(wsData, adminUsername) {
       if (!wsData.global.workspaceIds.includes(roWsId)) {
         wsData.global.workspaceIds.push(roWsId);
       }
+    }
+  }
+
+  // 3. Ensure order and table are 100% consistent (no orphans, no missing IDs)
+  wsData.global.workspaceIds = wsData.global.workspaceIds.filter((id) => Boolean(wsData.tables.workspaces[id]));
+  for (const id of Object.keys(wsData.tables.workspaces)) {
+    if (!wsData.global.workspaceIds.includes(id)) {
+      wsData.global.workspaceIds.push(id);
+    }
+  }
+
+  // 4. Ensure every workspace directory exists on disk so realpathNormalize succeeds
+  for (const ws of Object.values(wsData.tables.workspaces)) {
+    if (ws && ws.path) {
+      try { fs.mkdirSync(ws.path, { recursive: true }); } catch {}
     }
   }
 }
@@ -251,6 +288,20 @@ export function syncContainerWorkspace(username = 'user', role = process.env.DSH
   if (isAdmin) {
     registerRoWorkspacesFromHomes(data, username);
   }
+
+  // Ensure consistency before saving
+  data.global.workspaceIds = (data.global.workspaceIds || []).filter((id) => Boolean(data.tables.workspaces[id]));
+  for (const id of Object.keys(data.tables.workspaces)) {
+    if (!data.global.workspaceIds.includes(id)) {
+      data.global.workspaceIds.push(id);
+    }
+  }
+  for (const ws of Object.values(data.tables.workspaces)) {
+    if (ws && ws.path) {
+      try { fs.mkdirSync(ws.path, { recursive: true }); } catch {}
+    }
+  }
+
   fs.writeFileSync(wsPath, JSON.stringify(data, null, 2), 'utf8');
   return data;
 }

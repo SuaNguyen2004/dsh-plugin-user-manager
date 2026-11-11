@@ -18,7 +18,6 @@ import path from 'node:path';
 import httpProxy from 'http-proxy';
 import { User, Session, hashPassword, initDatabase } from '../database/index.js';
 import { signToken, verifyToken, authenticate, requireAdmin, extractToken } from './jwt.js';
-import { masterKeyPool } from './key-pool.js';
 import { masterModelManager } from './model-manager.js';
 import {
   reconcileOnBoot, startToolIdleSweeper, stopToolIdleSweeper, killToolContainer
@@ -216,6 +215,11 @@ export function createGatewayServer() {
         const token = signToken({ id: user.id, username: user.username, role: user.role });
         const expiresAt = Date.now() + 7 * 24 * 3600 * 1000;
         await Session.create({ token, user_id: user.id, expires_at: expiresAt }).catch(() => {});
+        try {
+          masterModelManager.syncUserHome(user.id, user.username, user.role);
+        } catch (e) {
+          console.error('[Gateway] syncUserHome error on login:', e.message);
+        }
         const cookie = `dsh_user_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 3600}`;
         return sendJson(res, 200, {
           message: 'Đăng nhập thành công',
@@ -282,10 +286,15 @@ export function createGatewayServer() {
       if (pathname === '/api/admin/users' && req.method === 'GET') {
         return requireAdmin(req, res, async () => {
           const users = await User.findAll({
-            attributes: ['id', 'username', 'role', 'status', 'createdAt'],
+            attributes: ['id', 'username', 'role', 'status', 'workspace_path', 'createdAt'],
             order: [['id', 'ASC']]
           });
-          return sendJson(res, 200, { total: users.length, users });
+          const mappedUsers = users.map((u) => {
+            const raw = u.toJSON();
+            raw.workspace_path = `/data/${raw.username}`;
+            return raw;
+          });
+          return sendJson(res, 200, { total: mappedUsers.length, users: mappedUsers });
         });
       }
 
@@ -380,17 +389,6 @@ export function createGatewayServer() {
           const deleted = masterModelManager.deleteModel(decodeURIComponent(modelDeleteMatch[1]));
           if (!deleted) return sendJson(res, 404, { error: 'Không tìm thấy Model để xóa.' });
           return sendJson(res, 200, { success: true, message: 'Đã xóa Model.' });
-        });
-      }
-      if (pathname === '/api/admin/models/config' && req.method === 'GET') {
-        return requireAdmin(req, res, async () => sendJson(res, 200, { success: true, pools: masterKeyPool.getMaskedPools() }));
-      }
-      if (pathname === '/api/admin/models/key' && req.method === 'POST') {
-        return requireAdmin(req, res, async () => {
-          const { ref, value, mode } = await parseJsonBody(req);
-          if (!ref || !value) return sendJson(res, 400, { error: 'ref và value là bắt buộc.' });
-          const result = mode === 'append' ? masterKeyPool.addKeys(ref, value) : masterKeyPool.setKeys(ref, value);
-          return sendJson(res, 200, { success: true, message: `Đã cấu hình API Key cho ${ref}`, result });
         });
       }
 

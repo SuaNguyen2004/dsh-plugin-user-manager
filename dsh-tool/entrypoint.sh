@@ -18,7 +18,7 @@ fi
 
 # Prepare the primary directory layout for this user:
 #   /data/<username>/default-workspace/files/{docs,pdf,sheets,images,others}
-SAFE_USER=$(echo "$USERNAME" | tr -c '[:alnum:]._-' '_')
+SAFE_USER=$(printf '%s' "$USERNAME" | tr -c '[:alnum:]._-' '_')
 mkdir -p "${WORKSPACE_ROOT}/${SAFE_USER}/default-workspace/files/docs" \
          "${WORKSPACE_ROOT}/${SAFE_USER}/default-workspace/files/pdf" \
          "${WORKSPACE_ROOT}/${SAFE_USER}/default-workspace/files/sheets" \
@@ -38,4 +38,7 @@ echo "ready" > /run/dsh-tool/ready
 
 echo "[dsh-tool] Ready role=${ROLE} user=${SAFE_USER} root=${WORKSPACE_ROOT}/${SAFE_USER} manifest=${MANIFEST_FILE}"
 
+if [ $# -gt 0 ]; then
+    exec "$@"
+fi
 exec sleep infinity

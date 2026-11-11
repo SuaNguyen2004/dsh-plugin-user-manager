@@ -257,6 +257,18 @@ export function createRouterHandler(opts = {}) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ service: 'dsh-main-router', status: 'healthy', children: listChildren() }));
     }
+    if (req.url === '/internal/reload-user-children' && req.method === 'POST') {
+      const removed = [];
+      for (const [key, rec] of children) {
+        if (rec.identity.role !== 'admin') {
+          try { rec.backend.close(); } catch {}
+          children.delete(key);
+          removed.push({ userId: key, username: rec.identity.username });
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, swept: removed.length, removed }));
+    }
     const identity = identityFrom(req);
     if (!identity) {
       // No trusted identity => this is a direct/unproxied hit. Refuse without revealing DSH.

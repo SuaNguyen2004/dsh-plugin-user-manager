@@ -14,50 +14,60 @@ export async function listUserWorkspaces(_args, _ctx) {
   }
 
   const users = [];
+  function scanWorkspace(wsPath, username, wsName) {
+    const files = [];
+    const filesRoot = path.posix.join(wsPath, 'files');
+    if (fs.existsSync(filesRoot)) {
+      for (const cat of fs.readdirSync(filesRoot, { withFileTypes: true })) {
+        if (!cat.isDirectory()) continue;
+        const catDir = path.posix.join(filesRoot, cat.name);
+        for (const f of fs.readdirSync(catDir, { withFileTypes: true })) {
+          if (f.isFile()) {
+            const fPath = path.posix.join(catDir, f.name);
+            files.push({
+              name: f.name,
+              category: cat.name,
+              size: fs.statSync(fPath).size,
+              roPath: fPath
+            });
+          }
+        }
+      }
+    }
+    return {
+      username,
+      workspace: wsName,
+      roPath: wsPath,
+      files
+    };
+  }
+
   for (const mountEntry of fs.readdirSync(RO_ROOT, { withFileTypes: true })) {
     if (!mountEntry.isDirectory()) continue;
     const mountPath = path.posix.join(RO_ROOT.replace(/\\/g, '/'), mountEntry.name);
     const userWorkspaces = [];
 
-    // Inside mountPath, structure is /data/workspace/<username>/<ws>/files/<cat>/<file>
-    for (const uEntry of fs.readdirSync(mountPath, { withFileTypes: true })) {
-      if (!uEntry.isDirectory()) continue;
-      const uPath = path.posix.join(mountPath, uEntry.name);
-      for (const wsEntry of fs.readdirSync(uPath, { withFileTypes: true })) {
-        if (!wsEntry.isDirectory()) continue;
-        const wsPath = path.posix.join(uPath, wsEntry.name);
-        const files = [];
-        const filesRoot = path.posix.join(wsPath, 'files');
-        if (fs.existsSync(filesRoot)) {
-          for (const cat of fs.readdirSync(filesRoot, { withFileTypes: true })) {
-            if (!cat.isDirectory()) continue;
-            const catDir = path.posix.join(filesRoot, cat.name);
-            for (const f of fs.readdirSync(catDir, { withFileTypes: true })) {
-              if (f.isFile()) {
-                const fPath = path.posix.join(catDir, f.name);
-                files.push({
-                  name: f.name,
-                  category: cat.name,
-                  size: fs.statSync(fPath).size,
-                  roPath: fPath
-                });
-              }
-            }
-          }
+    // Check if mountPath itself directly contains workspace folders (mountPath is /data/all_users_ro/<username>)
+    for (const sub of fs.readdirSync(mountPath, { withFileTypes: true })) {
+      if (!sub.isDirectory()) continue;
+      const subPath = path.posix.join(mountPath, sub.name);
+      if (fs.existsSync(path.posix.join(subPath, 'files'))) {
+        userWorkspaces.push(scanWorkspace(subPath, mountEntry.name, sub.name));
+      } else {
+        for (const ws of fs.readdirSync(subPath, { withFileTypes: true })) {
+          if (!ws.isDirectory()) continue;
+          const wsPath = path.posix.join(subPath, ws.name);
+          userWorkspaces.push(scanWorkspace(wsPath, sub.name, ws.name));
         }
-        userWorkspaces.push({
-          username: uEntry.name,
-          workspace: wsEntry.name,
-          roPath: wsPath,
-          files
-        });
       }
     }
 
-    users.push({
-      mount: mountEntry.name,
-      workspaces: userWorkspaces
-    });
+    if (userWorkspaces.length > 0) {
+      users.push({
+        mount: mountEntry.name,
+        workspaces: userWorkspaces
+      });
+    }
   }
 
   return { ok: true, users };

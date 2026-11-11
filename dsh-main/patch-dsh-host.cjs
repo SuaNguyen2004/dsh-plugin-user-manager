@@ -94,13 +94,13 @@ for (const wsFile of workspaceLibFiles) {
     if (content.includes('this.host.sessionPath(id) === this.record.path);')) {
       content = content.replace(
         'this.host.sessionPath(id) === this.record.path);',
-        'this.host.sessionPath(id) === this.record.path || (this.record.path && (this.record.path.includes("[View]") || /\\([^)]+\\)/.test(this.record.path))));'
+        'this.host.sessionPath(id) === this.record.path || (this.record.path && (this.record.path.includes("[View]") || /\\([^)]+\\)/.test(this.record.path) || this.record.path.includes("ro_workspaces") || this.record.path.includes("ro-"))));'
       );
       patched = true;
     } else if (content.includes('this.host.sessionPath(id) === this.record.path || (this.record.path && this.record.path.includes("[View]")));')) {
       content = content.replace(
         'this.host.sessionPath(id) === this.record.path || (this.record.path && this.record.path.includes("[View]")));',
-        'this.host.sessionPath(id) === this.record.path || (this.record.path && (this.record.path.includes("[View]") || /\\([^)]+\\)/.test(this.record.path))));'
+        'this.host.sessionPath(id) === this.record.path || (this.record.path && (this.record.path.includes("[View]") || /\\([^)]+\\)/.test(this.record.path) || this.record.path.includes("ro_workspaces") || this.record.path.includes("ro-"))));'
       );
       patched = true;
     }
@@ -109,13 +109,13 @@ for (const wsFile of workspaceLibFiles) {
     if (content.includes('this.host.sessionPath(id) === changed.path);')) {
       content = content.replace(
         'this.host.sessionPath(id) === changed.path);',
-        'this.host.sessionPath(id) === changed.path || (changed.path && (changed.path.includes("[View]") || /\\([^)]+\\)/.test(changed.path))));'
+        'this.host.sessionPath(id) === changed.path || (changed.path && (changed.path.includes("[View]") || /\\([^)]+\\)/.test(changed.path) || changed.path.includes("ro_workspaces") || changed.path.includes("ro-"))));'
       );
       patched = true;
     } else if (content.includes('this.host.sessionPath(id) === changed.path || (changed.path && changed.path.includes("[View]")));')) {
       content = content.replace(
         'this.host.sessionPath(id) === changed.path || (changed.path && changed.path.includes("[View]")));',
-        'this.host.sessionPath(id) === changed.path || (changed.path && (changed.path.includes("[View]") || /\\([^)]+\\)/.test(changed.path))));'
+        'this.host.sessionPath(id) === changed.path || (changed.path && (changed.path.includes("[View]") || /\\([^)]+\\)/.test(changed.path) || changed.path.includes("ro_workspaces") || changed.path.includes("ro-"))));'
       );
       patched = true;
     }

@@ -7,6 +7,8 @@
 // Volumes are never deleted; they persist across container removal.
 
 import Docker from 'dockerode';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const docker = new Docker(
   process.platform === 'win32'
@@ -15,6 +17,7 @@ export const docker = new Docker(
 );
 
 export const TOOL_IMAGE = process.env.DSH_TOOL_IMAGE || 'dsh-tool:latest';
+export const DATABASE_VOLUME = process.env.DSH_DATABASE_VOLUME || 'dsh-database';
 const TOOL_RAM_MB = parseInt(process.env.TOOL_RAM_MB || '256', 10);
 const TOOL_CPU_CORES = parseFloat(process.env.TOOL_CPU_CORES || '0.5', 10);
 const TOOL_PIDS_LIMIT = parseInt(process.env.TOOL_PIDS_LIMIT || '128', 10);
@@ -35,8 +38,52 @@ export function toolContainerName(username) {
   return `dsh-tool-${sanitizeSegment(username, 'user')}`;
 }
 
-export function toolVolumeName(userId, role) {
-  return (role === 'admin' || Number(userId) === 1) ? 'dsh-vol-admin' : `dsh-vol-user${userId}`;
+export function toolVolumeName() {
+  return DATABASE_VOLUME;
+}
+
+export async function ensureDatabaseVolume() {
+  try {
+    await docker.createVolume({
+      Name: DATABASE_VOLUME,
+      Labels: { 'dsh.managed': 'true', 'dsh.volume_kind': 'database' }
+    });
+  } catch (e) {
+    if (!/already exists|409/i.test(String(e?.message || e))) throw e;
+  }
+  return DATABASE_VOLUME;
+}
+
+export async function ensureDatabaseSubpath(cleanUser) {
+  // 1. Direct path inside gateway container (/data/database is mapped to dsh-database)
+  const directPath = path.posix.join('/data/database', cleanUser);
+  try {
+    if (fs.existsSync('/data/database')) {
+      if (!fs.existsSync(directPath)) {
+        fs.mkdirSync(directPath, { recursive: true, mode: 0o755 });
+        try { fs.chownSync(directPath, 1000, 1000); } catch {}
+      }
+      return;
+    }
+  } catch (e) {
+    console.warn(`[orchestrator] Could not ensure subpath via /data/database for ${cleanUser}:`, e.message);
+  }
+
+  // 2. Fallback when running outside docker container: use helper container
+  try {
+    const helper = await docker.createContainer({
+      Image: TOOL_IMAGE,
+      Cmd: ['sh', '-c', `mkdir -p /data/${cleanUser} && chown 1000:1000 /data/${cleanUser} && chmod 755 /data/${cleanUser}`],
+      HostConfig: {
+        Binds: [`${DATABASE_VOLUME}:/data:rw`],
+        AutoRemove: true
+      }
+    });
+    await helper.start();
+    await helper.wait();
+  } catch (e) {
+    console.warn(`[orchestrator] Fallback ensure subpath for ${cleanUser}:`, e.message);
+  }
 }
 
 export function recordToolUse(userId) {
@@ -99,36 +146,6 @@ async function findToolContainer(userId, username) {
   return null;
 }
 
-async function ensureVolume(userId, username, role) {
-  const Name = toolVolumeName(userId, role);
-  try {
-    await docker.createVolume({
-      Name,
-      Labels: { 'dsh.managed': 'true', 'dsh.userId': String(userId), 'dsh.username': sanitizeSegment(username) }
-    });
-  } catch (e) {
-    if (!/already exists|409/i.test(String(e?.message || e))) throw e;
-  }
-  return Name;
-}
-
-/** Admin tool containers additionally mount every existing user volume read-only. */
-async function collectAdminRoBinds() {
-  const binds = [];
-  try {
-    const { Volumes = [] } = await docker.listVolumes({});
-    for (const v of Volumes) {
-      if (!/^dsh-vol-user/.test(v.Name)) continue;
-      const id = v.Labels?.['dsh.userId'] || v.Name.replace(/^dsh-vol-user/, '');
-      const uname = v.Labels?.['dsh.username'] || `user${id}`;
-      binds.push(`${v.Name}:/data/all_users_ro/${id}-${uname}:ro`);
-    }
-  } catch (e) {
-    console.warn('[orchestrator] Could not enumerate user volumes for admin RO mounts:', e.message);
-  }
-  return binds;
-}
-
 async function waitForToolReady(container) {
   const deadline = Date.now() + TOOL_READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -178,9 +195,25 @@ export async function ensureToolContainer(userId, username, role = 'user') {
     }
 
     const cleanUser = sanitizeSegment(username);
-    const vol = await ensureVolume(userId, cleanUser, role);
-    const binds = [`${vol}:/data:rw`];
-    if (role === 'admin') binds.push(...(await collectAdminRoBinds()));
+    await ensureDatabaseVolume();
+    await ensureDatabaseSubpath(cleanUser);
+
+    const mounts = [
+      {
+        Type: 'volume',
+        Source: DATABASE_VOLUME,
+        Target: `/data/${cleanUser}`,
+        VolumeOptions: { Subpath: cleanUser }
+      }
+    ];
+    if (role === 'admin') {
+      mounts.push({
+        Type: 'volume',
+        Source: DATABASE_VOLUME,
+        Target: '/data/all_users_ro',
+        ReadOnly: true
+      });
+    }
 
     const networkMode = TOOL_NETWORK_DISABLED ? 'none' : await getGatewayNetwork();
 
@@ -197,7 +230,7 @@ export async function ensureToolContainer(userId, username, role = 'user') {
         'dsh.created_at': String(Date.now())
       },
       HostConfig: {
-        Binds: binds,
+        Mounts: mounts,
         Memory: TOOL_RAM_MB * 1024 * 1024,
         MemorySwap: TOOL_RAM_MB * 1024 * 1024,
         NanoCpus: Math.round(TOOL_CPU_CORES * 1e9),

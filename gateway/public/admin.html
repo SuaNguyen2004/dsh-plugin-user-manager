@@ -139,7 +139,7 @@
   <main>
     <div class="tabs">
       <button class="tab-btn active" onclick="switchSection('users')">👥 Quản lý Người dùng & Duyệt Đăng ký</button>
-      <button class="tab-btn" onclick="switchSection('models')">🤖 Cấu hình AI Model & Phân quyền Key</button>
+      <button class="tab-btn" onclick="switchSection('models')">🤖 Cấu hình AI Models & Phân quyền</button>
     </div>
 
     <!-- USERS TAB -->
@@ -167,29 +167,9 @@
 
     <!-- MODELS TAB -->
     <section id="sec-models" class="card" style="display: none;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <div>
-          <h2 class="card-title" style="margin-bottom: 4px;">Cấu hình AI Models & Phân quyền Người dùng</h2>
-          <div style="font-size: 12px; color: var(--text-muted);">Admin cấu hình Model & Provider tại DSH. Dashboard tự động đồng bộ và phân quyền cho User.</div>
-        </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 class="card-title" style="margin-bottom: 0;">Cấu hình AI Models & Phân quyền Người dùng</h2>
         <button class="btn btn-blue btn-sm" onclick="loadModels()">🔄 Làm mới từ DSH</button>
-      </div>
-
-      <!-- SYNC INFO BANNER -->
-      <div style="background: rgba(31, 111, 235, 0.08); border: 1px solid rgba(56, 139, 253, 0.3); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-        <div style="display: flex; align-items: center; gap: 14px;">
-          <div style="font-size: 28px;">🤖</div>
-          <div>
-            <div style="font-weight: 600; font-size: 14px; color: #58a6ff; margin-bottom: 4px;">Quản lý Phân quyền AI Model tập trung</div>
-            <div style="font-size: 12.5px; color: #8b949e; line-height: 1.5;">
-              Các Model & API Key dưới đây được <strong>đồng bộ tự động từ giao diện DeepSeek Harness của Admin</strong> (tại <em>Cài đặt ⚙️ → Models</em>).<br>
-              Tại bảng này, Admin thiết lập model nào chỉ dành riêng cho <strong>Admin</strong> hay chia sẻ cho <strong>Tất cả User</strong>.
-            </div>
-          </div>
-        </div>
-        <button class="btn btn-primary" onclick="goToDshWorkspace()" style="white-space: nowrap; height: 38px;">
-          ⚙️ Mở DSH để thêm / sửa Model
-        </button>
       </div>
 
       <!-- MODELS TABLE -->
@@ -291,7 +271,7 @@
               <td><strong>#${u.id}</strong></td>
               <td><strong>${u.username}</strong></td>
               <td><span class="badge ${u.role === 'admin' ? 'badge-admin' : ''}">${u.role.toUpperCase()}</span></td>
-              <td style="font-family: monospace; color: var(--text-muted);">${u.workspace_path}</td>
+              <td style="font-family: monospace; color: var(--text-muted);">${u.workspace_path || ('/data/' + u.username)}</td>
               <td><span class="badge ${badgeClass}">${u.status.toUpperCase()}</span></td>
               <td class="actions-cell">
                 ${u.status === 'pending' ? `
@@ -425,7 +405,7 @@
       }
     }
 
-    async function toggleModelEnabled(id, enabled) {
+    async function toggleModelStatus(id, enabled) {
       try {
         const res = await fetch(`/api/admin/models/${encodeURIComponent(id)}/status`, {
           method: 'PUT',
@@ -439,11 +419,14 @@
         if (res.ok) {
           showToast(d.message || 'Đã cập nhật trạng thái');
           loadModels();
+        } else {
+          showToast(d.error || 'Thao tác thất bại', true);
         }
       } catch (e) {
         showToast('Lỗi: ' + e.message, true);
       }
     }
+    const toggleModelEnabled = toggleModelStatus;
 
     async function toggleModelScope(id, newScope) {
       try {
