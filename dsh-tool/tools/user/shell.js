@@ -23,6 +23,14 @@ export async function runBash(args, ctx) {
     throw new Error('Truy cập bị từ chối: User không có quyền truy cập /data/all_users_ro.');
   }
 
+  // Path Guard check: block any bash command attempting to write/modify/remove inside /data/kb_ro
+  if (command.includes('/data/kb_ro')) {
+    const kbWritePattern = /(?:>|>>|\btee\b|\brm\b|\bmv\b|\bcp\b|\btouch\b|\bmkdir\b|\bchmod\b|\bchown\b|\bdd\b|\btruncate\b|\bsed\s+-i)[^;|&]*\/data\/kb_ro|\/data\/kb_ro[^\s;|&]*\s*(?:>|>>)/i;
+    if (kbWritePattern.test(command)) {
+      guardUserPath('/data/kb_ro/hack.txt', 'write');
+    }
+  }
+
   const username = sanitizeSegment(ctx.username || process.env.DSH_USERNAME || 'user', 'user');
   const wsName = normalizeWorkspaceName(args.workspace || ctx.workspace || 'default-workspace', username);
   const wsDir = ensureWorkspaceStructure(WORKSPACE_ROOT, username, wsName);

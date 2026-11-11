@@ -20,3 +20,5 @@ draft/
 
 data/
 .claude/
+ollama_data/
+

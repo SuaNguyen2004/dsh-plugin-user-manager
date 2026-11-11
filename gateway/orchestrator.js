@@ -18,6 +18,7 @@ export const docker = new Docker(
 
 export const TOOL_IMAGE = process.env.DSH_TOOL_IMAGE || 'dsh-tool:latest';
 export const DATABASE_VOLUME = process.env.DSH_DATABASE_VOLUME || 'dsh-database';
+export const KB_VOLUME = process.env.KB_VOLUME || 'dsh-knowledge-base';
 const TOOL_RAM_MB = parseInt(process.env.TOOL_RAM_MB || '256', 10);
 const TOOL_CPU_CORES = parseFloat(process.env.TOOL_CPU_CORES || '0.5', 10);
 const TOOL_PIDS_LIMIT = parseInt(process.env.TOOL_PIDS_LIMIT || '128', 10);
@@ -52,6 +53,18 @@ export async function ensureDatabaseVolume() {
     if (!/already exists|409/i.test(String(e?.message || e))) throw e;
   }
   return DATABASE_VOLUME;
+}
+
+export async function ensureKbVolume() {
+  try {
+    await docker.createVolume({
+      Name: KB_VOLUME,
+      Labels: { 'dsh.managed': 'true', 'dsh.volume_kind': 'knowledge-base' }
+    });
+  } catch (e) {
+    if (!/already exists|409/i.test(String(e?.message || e))) throw e;
+  }
+  return KB_VOLUME;
 }
 
 export async function ensureDatabaseSubpath(cleanUser) {
@@ -196,6 +209,7 @@ export async function ensureToolContainer(userId, username, role = 'user') {
 
     const cleanUser = sanitizeSegment(username);
     await ensureDatabaseVolume();
+    await ensureKbVolume();
     await ensureDatabaseSubpath(cleanUser);
 
     const mounts = [
@@ -204,6 +218,12 @@ export async function ensureToolContainer(userId, username, role = 'user') {
         Source: DATABASE_VOLUME,
         Target: `/data/${cleanUser}`,
         VolumeOptions: { Subpath: cleanUser }
+      },
+      {
+        Type: 'volume',
+        Source: KB_VOLUME,
+        Target: '/data/kb_ro',
+        ReadOnly: true
       }
     ];
     if (role === 'admin') {

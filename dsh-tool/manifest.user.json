@@ -2,7 +2,7 @@
   "role": "user",
   "version": "1.0.0",
   "toolsDir": "/opt/dsh-tool/tools/user",
-  "allowedRoots": ["/data"],
+  "allowedRoots": ["/data", "/data/kb_ro"],
   "tools": {
     "bash": {
       "module": "shell.js",

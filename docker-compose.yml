@@ -1,6 +1,5 @@
 # docker-compose.yml
-# DSH Lite Enterprise - Shared Brain (dsh-main) + Single Gateway (dsh-gateway) + On-Demand Tool Sandboxes (dsh-tool)
-# 100% Docker Named Volumes — ZERO host filesystem bind mounts
+# DSH Lite Enterprise - Shared Brain (dsh-main) + Single Gateway (dsh-gateway) + On-Demand Tool Sandboxes (dsh-tool) + Agentic RAG Stack
 
 name: dsh-enterprise-lite
 
@@ -62,6 +61,53 @@ services:
     networks:
       - default
 
+  postgres-db:
+    image: pgvector/pgvector:pg16
+    container_name: postgres-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dsh_rag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dsh_rag_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-dsh_rag_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - dsh-pgdata:/var/lib/postgresql/data
+    networks:
+      - default
+
+  embedding-service:
+    image: ollama/ollama:latest
+    container_name: embedding-service
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    networks:
+      - default
+
+  rag-api:
+    build:
+      context: ./rag-api
+      dockerfile: Dockerfile
+    image: rag-api:latest
+    container_name: rag-api
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dsh_rag_user}:${POSTGRES_PASSWORD:-dsh_rag_pass_2026}@postgres-db:5432/${POSTGRES_DB:-dsh_rag_db}
+      OLLAMA_URL: http://embedding-service:11434
+    expose:
+      - "8000"
+    volumes:
+      - dsh-knowledge-base:/data/kb_ro
+    depends_on:
+      - postgres-db
+      - embedding-service
+    networks:
+      - default
+
 volumes:
   dsh-gateway-data:
     name: dsh-gateway-data
@@ -69,6 +115,10 @@ volumes:
     name: dsh-homes
   dsh-database:
     name: dsh-database
+  dsh-knowledge-base:
+    name: dsh-knowledge-base
+  dsh-pgdata:
+    name: dsh-pgdata
 
 networks:
   default:

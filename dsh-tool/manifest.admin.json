@@ -2,7 +2,7 @@
   "role": "admin",
   "version": "1.0.0",
   "toolsDir": "/opt/dsh-tool/tools/admin",
-  "allowedRoots": ["/data", "/data/all_users_ro"],
+  "allowedRoots": ["/data", "/data/all_users_ro", "/data/kb_ro"],
   "tools": {
     "bash": {
       "module": "shell.js",

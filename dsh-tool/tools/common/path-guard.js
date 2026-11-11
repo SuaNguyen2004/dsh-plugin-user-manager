@@ -101,19 +101,32 @@ function normalizeLegacyWorkspacePrefix(rawPath, workspaceRoot) {
 /**
  * Resolve and guard a path for a standard User (`role = user`).
  * Users are strictly confined to `/data/<username>/<workspace>` (and may access any of their own
- * workspaces under `/data/<username>/<ws>` when they pass an explicit `/data/<username>/<ws>/...` path).
+ * workspaces under `/data/<username>/<ws>` when they pass an explicit `/data/<username>/<ws>/...` path),
+ * with READ-ONLY access permitted to the shared Knowledge Base at `/data/kb_ro`.
  */
-export function guardUserPath({
-  workspaceRoot = process.env.WORKSPACE_ROOT || '/data',
-  username,
-  workspace,
-  targetPath = '.',
-  mode = 'read'
-}) {
+export function guardUserPath(arg1, arg2) {
+  // Support both positional signature guardUserPath(path, mode) and options object signature
+  let workspaceRoot = process.env.WORKSPACE_ROOT || '/data';
+  let username = process.env.DSH_USERNAME || 'user';
+  let workspace;
+  let targetPath = '.';
+  let mode = 'read';
+
+  if (typeof arg1 === 'string') {
+    targetPath = arg1;
+    mode = arg2 || 'read';
+  } else if (arg1 && typeof arg1 === 'object') {
+    workspaceRoot = arg1.workspaceRoot ?? workspaceRoot;
+    username = arg1.username ?? username;
+    workspace = arg1.workspace;
+    targetPath = arg1.targetPath ?? '.';
+    mode = arg1.mode ?? 'read';
+  }
+
   const cleanUser = sanitizeSegment(username, 'user');
   const normRoot = (workspaceRoot || '/data').replace(/\\/g, '/').replace(/\/+$/, '');
   const userRoot = path.posix.join(normRoot, cleanUser);
-  fs.mkdirSync(userRoot, { recursive: true });
+  try { fs.mkdirSync(userRoot, { recursive: true }); } catch {}
 
   const raw = normalizeLegacyWorkspacePrefix(targetPath, normRoot);
 
@@ -122,12 +135,24 @@ export function guardUserPath({
     throw new PathGuardError('Người dùng thường không có quyền truy cập dữ liệu giám sát (/data/all_users_ro).', 'FORBIDDEN_RO_MOUNT');
   }
 
+  // Knowledge Base exception (/data/kb_ro): allow ONLY in read mode, throw OUTSIDE_WORKSPACE on write/edit/delete
+  const kbRoot = '/data/kb_ro';
+  if (raw === kbRoot || raw.startsWith(kbRoot + '/')) {
+    if (mode === 'read') {
+      return assertWithinRoot(kbRoot, raw, 'read');
+    }
+    throw new PathGuardError(
+      `Truy cập bị từ chối (${mode}): Kho tri thức chung ("${kbRoot}") ở chế độ CHỈ ĐỌC (Read-Only). Đường dẫn "${targetPath}" nằm ngoài phạm vi ghi cho phép.`,
+      'OUTSIDE_WORKSPACE'
+    );
+  }
+
   // If the caller passed an absolute path naming one of this user's workspaces (/data/<user>/<ws>/...),
   // honor that workspace as the target workspace while still enforcing confinement inside it.
   const pathWs = extractWorkspaceFromPath(raw, cleanUser);
   const effectiveWs = pathWs || workspace || 'default-workspace';
   const wsDir = getUserWorkspaceDir(normRoot, cleanUser, effectiveWs);
-  fs.mkdirSync(wsDir, { recursive: true });
+  try { fs.mkdirSync(wsDir, { recursive: true }); } catch {}
 
   let candidate;
   if (path.posix.isAbsolute(raw)) {
@@ -170,6 +195,17 @@ export function guardAdminPath({
       );
     }
     return assertWithinRoot(normRoRoot, raw, 'read');
+  }
+
+  const kbRoot = '/data/kb_ro';
+  if (raw === kbRoot || raw.startsWith(kbRoot + '/')) {
+    if (mode === 'read') {
+      return assertWithinRoot(kbRoot, raw, 'read');
+    }
+    throw new PathGuardError(
+      `Truy cập bị từ chối (${mode}): Kho tri thức chung ("${kbRoot}") ở chế độ CHỈ ĐỌC (Read-Only) trong sandbox.`,
+      'OUTSIDE_WORKSPACE'
+    );
   }
 
   const pathWs = extractWorkspaceFromPath(raw, cleanAdmin);
